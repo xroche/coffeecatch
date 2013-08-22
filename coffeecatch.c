@@ -27,7 +27,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
+#include <string.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <assert.h>
@@ -39,7 +41,6 @@
 #endif
 #include <pthread.h>
 #include <dlfcn.h>
-#include <asm/sigcontext.h>
 
 #include "coffeecatch.h"
 
@@ -74,6 +75,7 @@ static const int native_sig_catch[SIG_CATCH_COUNT + 1]
 #define SIG_NUMBER_MAX 32
 
 /* Taken from richard.quirk's header file. (Android does not have it) */
+#ifdef __ANDROID__
 #ifndef ucontext_h_seen
 #define ucontext_h_seen
 
@@ -85,6 +87,7 @@ typedef struct ucontext {
   unsigned long uc_sigmask;
 } ucontext_t;
 
+#endif
 #endif
 
 /* Process-wide crash handler structure. */
@@ -758,6 +761,20 @@ static UNUSED uintptr_t coffeecatch_get_backtrace(ssize_t index) {
 }
 
 /**
+ * Get the program counter, given a pointer to a ucontext_t context.
+ **/
+static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc) {
+#ifdef __arm__
+  return uc->uc_mcontext.arm_pc;
+#elif (defined(__x86_64__))
+  return uc->uc_mcontext.gregs[REG_RIP];
+#elif (defined(__i386))
+  return uc->uc_mcontext.gregs[REG_EIP];
+#else
+#endif
+}
+
+/**
  * Get the full error message associated with the crash.
  */
 const char* coffeecatch_get_message() {
@@ -811,9 +828,9 @@ const char* coffeecatch_get_message() {
     }
 
     /* Faulting program counter location. */
-    if (t->uc.uc_mcontext.arm_pc != 0) {
+    if (coffeecatch_get_pc_from_ucontext(&t->uc) != 0) {
       Dl_info info;
-      void * const addr = (void*) t->uc.uc_mcontext.arm_pc;
+      void * const addr = (void*) coffeecatch_get_pc_from_ucontext(&t->uc);
       /* dladdr() returns 0 on error, and nonzero on success. */
       if (dladdr(addr, &info) != 0 && info.dli_fname != NULL) {
         void * const near = info.dli_saddr;
@@ -841,6 +858,9 @@ const char* coffeecatch_get_message() {
   } else {
     /* Static buffer in case of emergency */
     static char buffer[256];
+#ifdef _GNU_SOURCE
+    return strerror_r(error, &buffer[0], sizeof(buffer));
+#else
     const int code = strerror_r(error, &buffer[0], sizeof(buffer));
     errno = error;
     if (code == 0) {
@@ -848,6 +868,7 @@ const char* coffeecatch_get_message() {
     } else {
       return "unknown error during crash handler setup";
     }
+#endif
   }
 }
 
