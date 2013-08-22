@@ -1,13 +1,13 @@
 coffeecatch
 ===========
 
-**CoffeeCatch**, a tiny native signal handler/catcher for JNI code (especially for *Android*/Dalvik)
+**CoffeeCatch**, a *tiny* native signal handler/catcher for JNI code (especially for **Android**/Dalvik)
 
 Allows to "gracefully" recover from a signal (segv, sibus...) as if it was a Java exception. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
 
 The handler is thread-safe, but client must have exclusive control on the signal handlers (ie. the library is installing its own signal handlers on top of the existing ones).
 
-Example:
+**Example**:
 
 ```c
 COFFEE_TRY() {
