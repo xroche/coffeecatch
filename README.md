@@ -9,6 +9,7 @@ The handler is thread-safe, but client must have exclusive control on the signal
 
 Example:
 
+```c
 COFFEE_TRY() {
   call_some_native_function()
 } COFFEE_CATCH() {
@@ -16,4 +17,4 @@ COFFEE_TRY() {
   jclass cls = (*env)->FindClass(env, "java/lang/RuntimeException");
   (*env)->ThrowNew(env, cls, strdup(message));
 } COFFEE_END();
-
+```
