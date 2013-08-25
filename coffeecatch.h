@@ -73,6 +73,8 @@
 #ifndef COFFEECATCH_H
 #define COFFEECATCH_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -164,6 +166,28 @@ extern void coffeecatch_abort(const char* exp, const char* file, int line);
  * using coffeecatch_abort().
  */
 #define coffeecatch_assert(EXP) (void)( (EXP) || (coffeecatch_abort(#EXP, __FILE__, __LINE__), 0) )
+
+/**
+ * Get the backtrace size, or 0 upon error.
+ * This function can only be called inside a COFFEE_CATCH() block.
+ */
+extern size_t coffeecatch_get_backtrace_size(void);
+
+/**
+ * Get the backtrace pointer, or 0 upon error.
+ * This function can only be called inside a COFFEE_CATCH() block.
+ */
+extern uintptr_t coffeecatch_get_backtrace(ssize_t index);
+
+/**
+ * Enumerate the backtrace with information.
+ * This function can only be called inside a COFFEE_CATCH() block.
+ */
+extern void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
+                                           const char *module,
+                                           uintptr_t addr,
+                                           const char *function,
+                                           uintptr_t offset), void *arg);
 
 /** Internal functions & definitions, not to be used directly. **/
 #include <setjmp.h>

@@ -25,6 +25,11 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef __ANDROID__
+#define USE_UNWIND
+#define USE_CORKSCREW
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -35,16 +40,16 @@
 #include <assert.h>
 #include <signal.h>
 #include <setjmp.h>
-#define UNUSED __attribute__ ((unused))
-#ifdef USE_UNWIND
+#if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
 #include <unwind.h>
 #endif
 #include <pthread.h>
 #include <dlfcn.h>
-
 #include "coffeecatch.h"
 
-/*#define NDK_DEBUG 1*/
+#define UNUSED __attribute__ ((unused))
+
+#define NDK_DEBUG 1
 #if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 1 ) )
 #define DEBUG(A) do { A; } while(0)
 #define FD_ERRNO 2
@@ -88,6 +93,35 @@ typedef struct ucontext {
 } ucontext_t;
 
 #endif
+
+#ifdef USE_CORKSCREW
+typedef struct map_info_t map_info_t;
+/* Extracted from Android's include/corkscrew/backtrace.h */
+typedef struct {
+    uintptr_t absolute_pc;
+    uintptr_t stack_top;
+    size_t stack_size;
+} backtrace_frame_t;
+typedef struct {
+    uintptr_t relative_pc;
+    uintptr_t relative_symbol_addr;
+    char* map_name;
+    char* symbol_name;
+    char* demangled_name;
+} backtrace_symbol_t;
+/* Extracted from Android's libcorkscrew/arch-arm/backtrace-arm.c */
+typedef ssize_t (*t_unwind_backtrace_signal_arch)
+(siginfo_t* si, void* sc, const map_info_t* lst, backtrace_frame_t* bt,
+size_t ignore_depth, size_t max_depth);
+typedef map_info_t* (*t_acquire_my_map_info_list)();
+typedef void (*t_release_my_map_info_list)(map_info_t* milist);
+typedef void (*t_get_backtrace_symbols)(const backtrace_frame_t* backtrace,
+                                        size_t frames,
+                                        backtrace_symbol_t* symbols);
+typedef void (*t_free_backtrace_symbols)(backtrace_symbol_t* symbols,
+                                         size_t frames);
+#endif
+
 #endif
 
 /* Process-wide crash handler structure. */
@@ -120,11 +154,13 @@ typedef struct native_code_handler_struct {
   ucontext_t uc;
 
   /* Uwind context. */
-#ifdef USE_UNWIND
+#if (defined(USE_CORKSCREW))
+  backtrace_frame_t frames[BACKTRACE_FRAMES_MAX];
+#elif (defined(USE_UNWIND))
   uintptr_t frames[BACKTRACE_FRAMES_MAX];
+#endif
   size_t frames_size;
   size_t frames_skip;
-#endif
 
   /* Custom assertion failures. */
   const char *expression;
@@ -139,10 +175,10 @@ static native_code_global_struct native_code_g =
 /* Thread variable holding context. */
 pthread_key_t native_code_thread;
 
-#ifdef USE_UNWIND
-
+#if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
 /* Unwind callback */
-static UNUSED _Unwind_Reason_Code coffeecatch_unwind_callback(struct _Unwind_Context* context, void* arg) {
+static UNUSED _Unwind_Reason_Code
+coffeecatch_unwind_callback(struct _Unwind_Context* context, void* arg) {
   native_code_handler_struct *const s = (native_code_handler_struct*) arg;
 
   const uintptr_t ip = _Unwind_GetIP(context);
@@ -161,10 +197,79 @@ static UNUSED _Unwind_Reason_Code coffeecatch_unwind_callback(struct _Unwind_Con
   if (s->frames_size == BACKTRACE_FRAMES_MAX) {
     return _URC_END_OF_STACK;
   } else {
+    DEBUG(print("returned _URC_OK\n"));
     return _URC_OK;
   }
 }
+#endif
 
+/* Use libcorkscrew to get a backtrace inside a signal handler.
+   Will only return a non-zero code on Android >= 4 (with libcorkscrew.so
+   being shipped) */
+#ifdef USE_CORKSCREW
+static ssize_t coffeecatch_backtrace_signal(siginfo_t* si, void* sc, 
+                                            backtrace_frame_t* frames,
+                                            size_t ignore_depth,
+                                            size_t max_depth) {
+  void *const libcorkscrew = dlopen("libcorkscrew.so", RTLD_LAZY | RTLD_LOCAL);
+  if (libcorkscrew != NULL) {
+    t_unwind_backtrace_signal_arch unwind_backtrace_signal_arch 
+      = (t_unwind_backtrace_signal_arch)
+      dlsym(libcorkscrew, "unwind_backtrace_signal_arch");
+    t_acquire_my_map_info_list acquire_my_map_info_list 
+      = (t_acquire_my_map_info_list)
+      dlsym(libcorkscrew, "acquire_my_map_info_list");
+    t_release_my_map_info_list release_my_map_info_list 
+      = (t_release_my_map_info_list)
+      dlsym(libcorkscrew, "release_my_map_info_list");
+    if (unwind_backtrace_signal_arch != NULL
+        && acquire_my_map_info_list != NULL
+        && release_my_map_info_list != NULL) {
+      map_info_t*const info = acquire_my_map_info_list();
+      const ssize_t size = 
+        unwind_backtrace_signal_arch(si, sc, info, frames, ignore_depth,
+                                     max_depth);
+      release_my_map_info_list(info);
+      return size;
+    } else {
+      DEBUG(print("symbols not founs in libcorkscrew.so\n"));
+    }
+    dlclose(libcorkscrew);
+  } else {
+    DEBUG(print("libcorkscrew.so could not be loaded\n"));
+  }
+  return -1;
+}
+
+static void coffeecatch_backtrace_symbols(const backtrace_frame_t* backtrace,
+                                          size_t frames,
+                                          void (*fun)(void *arg,
+                                          const backtrace_symbol_t *sym),
+                                          void *arg) {
+  void *const libcorkscrew = dlopen("libcorkscrew.so", RTLD_LAZY | RTLD_LOCAL);
+  if (libcorkscrew != NULL) {
+    t_get_backtrace_symbols get_backtrace_symbols 
+      = (t_get_backtrace_symbols)
+      dlsym(libcorkscrew, "get_backtrace_symbols");
+    t_free_backtrace_symbols free_backtrace_symbols 
+      = (t_free_backtrace_symbols)
+      dlsym(libcorkscrew, "free_backtrace_symbols");
+    if (get_backtrace_symbols != NULL
+        && free_backtrace_symbols != NULL) {
+      backtrace_symbol_t symbols[BACKTRACE_FRAMES_MAX];
+      size_t i;
+      if (frames > BACKTRACE_FRAMES_MAX) {
+        frames = BACKTRACE_FRAMES_MAX;
+      }
+      get_backtrace_symbols(backtrace, frames, symbols);
+      for(i = 0; i < frames; i++) {
+        fun(arg, &symbols[i]);
+      }
+      free_backtrace_symbols(symbols, frames);
+    }
+    dlclose(libcorkscrew);
+  }
+}
 #endif
 
 /* Call the old handler. */
@@ -255,13 +360,20 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
   /* Skip us and the caller. */
   t->frames_skip = 2;
 
+  /* Use the corkscrew library to extract the backtrace. */
+#ifdef USE_CORKSCREW
+  t->frames_size = coffeecatch_backtrace_signal(si, sc, t->frames, 0,
+                                                BACKTRACE_FRAMES_MAX);
+#else
   /* Unwind frames (equivalent to backtrace()) */
   _Unwind_Backtrace(coffeecatch_unwind_callback, t);
+#endif
 
-  if (t->frames_size != 0)
-    DEBUG(print("called unwind()\n"));
-  else
-    DEBUG(print("called unwind(), but no traces\n"));
+  if (t->frames_size != 0) {
+    DEBUG(print("called _Unwind_Backtrace()\n"));
+  } else {
+    DEBUG(print("called _Unwind_Backtrace(), but no traces\n"));
+  }
 #endif
 }
 
@@ -731,7 +843,7 @@ static UNUSED const char* coffeecatch_desc_sig(int sig, int code) {
 /**
  * Get the backtrace size. Returns 0 if no backtrace is available.
  */
-static UNUSED size_t coffeecatch_get_backtrace_size(void) {
+size_t coffeecatch_get_backtrace_size(void) {
 #ifdef USE_UNWIND
   const native_code_handler_struct* const t = coffeecatch_get();
   if (t != NULL) {
@@ -747,7 +859,7 @@ static UNUSED size_t coffeecatch_get_backtrace_size(void) {
 /**
  * Get the <index>th element of the backtrace, or 0 upon error.
  */
-static UNUSED uintptr_t coffeecatch_get_backtrace(ssize_t index) {
+uintptr_t coffeecatch_get_backtrace(ssize_t index) {
 #ifdef USE_UNWIND
   const native_code_handler_struct* const t = coffeecatch_get();
   if (t != NULL) {
@@ -755,7 +867,11 @@ static UNUSED uintptr_t coffeecatch_get_backtrace(ssize_t index) {
       index = t->frames_size + index;
     }
     if (index >= 0 && (size_t) index < t->frames_size) {
+#ifdef USE_CORKSCREW
+      return t->frames[index].absolute_pc;
+#else
       return t->frames[index];
+#endif
     }
   }
 #else
@@ -792,6 +908,60 @@ static int coffeecatch_is_dll(const char *name) {
     }
   }
   return 0;
+}
+
+/* Extract a line information on a PC address. */
+static void format_pc_address_cb(uintptr_t pc, 
+                                 void (*fun)(void *arg, const char *module, 
+                                             uintptr_t addr,
+                                             const char *function,
+                                             uintptr_t offset), void *arg) {
+  if (pc != 0) {
+    Dl_info info;
+    void * const addr = (void*) pc;
+    /* dladdr() returns 0 on error, and nonzero on success. */
+    if (dladdr(addr, &info) != 0 && info.dli_fname != NULL) {
+      const uintptr_t near = (uintptr_t) info.dli_saddr;
+      const uintptr_t offs = pc - near;
+      const uintptr_t addr_rel = pc - (uintptr_t) info.dli_fbase;
+      /* We need the absolute address for the main module (?).
+         TODO FIXME to be investigated. */
+      const uintptr_t addr_to_use = coffeecatch_is_dll(info.dli_fname)
+        ? addr_rel : pc;
+      fun(arg, info.dli_fname, addr_to_use, info.dli_sname, offs);
+    } else {
+      fun(arg, NULL, pc, NULL, 0);
+    }
+  }
+}
+
+typedef struct t_print_fun {
+  char *buffer;
+  size_t buffer_size;
+} t_print_fun;
+
+static void print_fun(void *arg, const char *module, uintptr_t uaddr,
+                      const char *function, uintptr_t offset) {
+  t_print_fun *const t = (t_print_fun*) arg;
+  char *const buffer = t->buffer;
+  const size_t buffer_size = t->buffer_size;
+  const void*const addr = (void*) uaddr;
+  if (module == NULL) {
+    snprintf(buffer, buffer_size, "[at %p]", addr);
+  } else if (function != NULL) {
+    snprintf(buffer, buffer_size, "[at %s:%p (%s+0x%x)]", module, addr,
+             function, (int) offset);
+  } else {
+    snprintf(buffer, buffer_size, "[at %s:%p]", module, addr);
+  }
+}
+
+/* Format a line information on a PC address. */
+static void format_pc_address(char *buffer, size_t buffer_size, uintptr_t pc) {
+  t_print_fun t;
+  t.buffer = buffer;
+  t.buffer_size = buffer_size;
+  format_pc_address_cb(pc, print_fun, &t);
 }
 
 /**
@@ -864,33 +1034,13 @@ const char* coffeecatch_get_message() {
 
     /* Faulting program counter location. */
     if (coffeecatch_get_pc_from_ucontext(&t->uc) != 0) {
-      Dl_info info;
-      void * const addr = (void*) coffeecatch_get_pc_from_ucontext(&t->uc);
-      /* dladdr() returns 0 on error, and nonzero on success. */
-      if (dladdr(addr, &info) != 0 && info.dli_fname != NULL) {
-        void * const near = info.dli_saddr;
-        const int offs = (int) ((uintptr_t) addr - (uintptr_t) near);
-        const void* addr_rel = (void*) (uintptr_t)
-            ((uintptr_t) addr - (uintptr_t) info.dli_fbase);
-        /* We need the absolute address for the main module (?).
-           TODO FIXME to be investigated. */
-        const void* addr_to_use = coffeecatch_is_dll(info.dli_fname)
-          ? addr_rel : addr;
-        if (info.dli_sname != NULL) {
-          snprintf(&buffer[buffer_offs], buffer_len - buffer_offs,
-                           " [at %s:%p (%s+0x%x)]", info.dli_fname,
-                           addr_to_use, info.dli_sname, offs);
-        } else {
-          snprintf(&buffer[buffer_offs], buffer_len - buffer_offs,
-                           " [at %s:%p]", info.dli_fname,
-                           addr_to_use);
-        }
-      } else {
-        snprintf(&buffer[buffer_offs], buffer_len - buffer_offs, " [at %p]",
-                 addr);
-      }
+      const uintptr_t pc = coffeecatch_get_pc_from_ucontext(&t->uc);
+      snprintf(&buffer[buffer_offs], buffer_len - buffer_offs, " ");
+      buffer_offs += strlen(&buffer[buffer_offs]);
+      format_pc_address(&buffer[buffer_offs], buffer_len - buffer_offs, pc);
       buffer_offs += strlen(&buffer[buffer_offs]);
     }
+
     /* Return string. */
     buffer[buffer_offs] = '\0';
     return t->stack_buffer;
@@ -907,6 +1057,52 @@ const char* coffeecatch_get_message() {
     } else {
       return "unknown error during crash handler setup";
     }
+#endif
+  }
+}
+
+#if (defined(USE_CORKSCREW))
+typedef struct t_coffeecatch_backtrace_symbols_fun {
+  void (*fun)(void *arg, const char *module, uintptr_t addr,
+              const char *function, uintptr_t offset);
+  void *arg;
+} t_coffeecatch_backtrace_symbols_fun;
+
+static void coffeecatch_backtrace_symbols_fun(void *arg, const backtrace_symbol_t *sym) {
+  t_coffeecatch_backtrace_symbols_fun *const bt =
+    (t_coffeecatch_backtrace_symbols_fun*) arg;
+  const char *symbol = sym->demangled_name != NULL 
+    ? sym->demangled_name : sym->symbol_name;
+  const uintptr_t rel = sym->relative_pc - sym->relative_symbol_addr;
+  bt->fun(bt->arg, sym->map_name, sym->relative_pc, symbol, rel);
+}
+#endif
+
+/**
+ * Enumerate backtrace information.
+ */
+void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
+                                    const char *module,
+                                    uintptr_t addr,
+                                    const char *function,
+                                    uintptr_t offset), void *arg) {
+  const native_code_handler_struct* const t = coffeecatch_get();
+  if (t != NULL) {
+#if (defined(USE_CORKSCREW))
+    t_coffeecatch_backtrace_symbols_fun bt;
+    bt.fun = fun;
+    bt.arg = arg;
+    coffeecatch_backtrace_symbols(t->frames, t->frames_size,
+                                  coffeecatch_backtrace_symbols_fun, &bt);
+#elif (defined(USE_UNWIND))
+    size_t i;
+    for(i = 0; i < t->frames_size; i++) {
+      const uintptr_t pc = t->frames[i];
+      format_pc_address_cb(pc, fun, arg);
+    }
+#else
+  (void) fun;
+  (void) arg;
 #endif
   }
 }
