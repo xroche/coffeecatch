@@ -22,10 +22,24 @@ LOCAL_SRC_FILES += coffeecatch.c coffeejni.c
 *then, use the COFFEE_TRY_JNI() macro to protect your call(s):*
 
 ```c
-void my_native_function(JNIEnv* env, jobject object, jint *retcode) {
+/** The potentially dangerous function. **/
+jint call_dangerous_function(JNIEnv* env, jobject object) {
+  // ... do dangerous things!
+  return 42;
+}
+
+/** Protected function stub. **/
+void foo_protected(JNIEnv* env, jobject object, jint *retcode) {
   /* Try to call 'call_dangerous_function', and raise proper Java Error upon 
    * fatal error (SEGV, etc.). **/
   COFFEE_TRY_JNI(env, *retcode = call_dangerous_function(env, object));
+}
+
+/** Regular JNI entry point. **/
+jint Java_com_example_android_MyNative_foo(JNIEnv* env, jobject object) {
+  jint retcode = 0;
+  foo_protected(env, object, &retcode);
+  return retcode;
 }
 ```
 
