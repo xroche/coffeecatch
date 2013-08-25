@@ -14,6 +14,13 @@ You must build all your libraries with `-funwind-tables`, to get proper unwindin
 
 **Example**:
 
+*First, build the library, or just add the two files in the list of local files to be built:*
+```
+LOCAL_SRC_FILES += coffeecatch.c coffeejni.c
+```
+
+*then, use the COFFEE_TRY_JNI() macro to protect your call(s):*
+
 ```c
 void my_native_function(JNIEnv* env, jobject object, jint *retcode) {
   /* Try to call 'call_dangerous_function', and raise proper Java Error upon 
