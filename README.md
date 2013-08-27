@@ -7,7 +7,7 @@ Allows to "gracefully" recover from a signal (segv, sibus...) as if it was a Jav
 
 The handler is thread-safe, but client must have exclusive control on the signal handlers (ie. the library is installing its own signal handlers on top of the existing ones).
 
-You must build all your libraries with `-funwind-tables`, to get proper unwinding information on all binaries. On ARM, you may also use the `--no-merge-exidx-entries`linker switch, to solve certain issues with unwinding (the switch is possibly not needed anymore). On Android, this can be achieved by using this line in the `Android.mk` file in each library block:
+You must build all your libraries with `-funwind-tables`, to get proper unwinding information on all binaries. On ARM, you may also use the `--no-merge-exidx-entries` linker switch, to solve certain issues with unwinding (the switch is possibly not needed anymore). On Android, this can be achieved by using this line in the `Android.mk` file in each library block:
 ```
   LOCAL_CFLAGS := -funwind-tables -Wl,--no-merge-exidx-entries
 ```
