@@ -43,7 +43,7 @@ jint Java_com_example_android_MyNative_foo(JNIEnv* env, jobject object) {
 }
 ```
 
-*and, in case of crash, get something like this*:
+*and, in case of crash, get something like this (note: the last Exception with native backtrace is produced on Android >= 4.1.1)*:
 ```
 FATAL EXCEPTION: AsyncTask #5
 java.lang.RuntimeException: An error occured while executing doInBackground()
