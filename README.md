@@ -1,9 +1,11 @@
 coffeecatch
 ===========
 
-**CoffeeCatch**, a *tiny* native signal handler/catcher for JNI code (especially for **Android**/Dalvik)
+**CoffeeCatch**, a *tiny* native POSIX signal handler/catcher (especially useful for JNI code on **Android**/Dalvik)
 
-Allows to "gracefully" recover from a signal (segv, sibus...) as if it was a Java exception. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
+It allows to "gracefully" recover from a signal (SIGSEGV, SIGBUS...) as if it was an exception. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
+
+You may read the corresponding [discussion](http://blog.httrack.com/blog/2013/08/23/catching-posix-signals-on-android/) about this project.
 
 The handler is thread-safe, but client must have exclusive control on the signal handlers (ie. the library is installing its own signal handlers on top of the existing ones).
 
