@@ -30,7 +30,7 @@ If you want to get useful stack traces, you should build all your libraries with
 
 **Example**
 
-1. JNI
+* JNI
 
 *First, build the library, or just add the two files in the list of local files to be built:*
 ```
@@ -99,7 +99,7 @@ Caused by: java.lang.Error: signal 11 (Address not mapped to object) at address 
 	at system.lib.libc_so.0xcbd4(pthread_create:0xd0:0)
 ```
 
-2. Outside JNI code
+* Outside JNI code
 
 The COFFEE_TRY()/COFFEE_CATCH()/COFFEE_END() syntax can be used:
 
