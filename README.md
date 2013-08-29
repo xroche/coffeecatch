@@ -1,7 +1,7 @@
 coffeecatch
 ===========
 
-**CoffeeCatch**, a *tiny* native POSIX signal handler/catcher (especially useful for JNI code on **Android**/Dalvik)
+**CoffeeCatch**, a *tiny* native POSIX signal catcher (especially useful for JNI code on **Android**/Dalvik)
 
 It allows to "gracefully" recover from a **signal** (`SIGSEGV`, `SIGBUS`...) as if it was an **exception**. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
 
