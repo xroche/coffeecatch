@@ -30,7 +30,7 @@ If you want to get useful stack traces, you should build all your libraries with
 
 **Example**
 
-* JNI
+* Inside JNI (typically, Android)
 
 *First, build the library, or just add the two files in the list of local files to be built:*
 ```
