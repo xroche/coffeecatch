@@ -5,16 +5,30 @@ coffeecatch
 
 It allows to "gracefully" recover from a signal (SIGSEGV, SIGBUS...) as if it was an exception. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
 
+```c
+/** Enter protected section. **/
+COFFEE_TRY() {
+  /** Try to call 'call_some_native_function'. **/
+  call_some_native_function();
+} COFFEE_CATCH() {
+  /** Caught a signal. **/
+  fprintf(stderr, "Caught signal: %s\n", coffeecatch_get_message());
+  throw_something();
+} COFFEE_END();
+```
+
 You may read the corresponding [discussion](http://blog.httrack.com/blog/2013/08/23/catching-posix-signals-on-android/) about this project.
 
 The handler is thread-safe, but client must have exclusive control on the signal handlers (ie. the library is installing its own signal handlers on top of the existing ones).
+
+**Libraries**
 
 If you want to get useful stack traces, you should build all your libraries with `-funwind-tables` (this adds unwinding information). On ARM, you may also use the `--no-merge-exidx-entries` linker switch, to solve certain issues with unwinding (the switch is possibly not needed anymore). On Android, this can be achieved by using this line in the `Android.mk` file in each library block:
 ```
   LOCAL_CFLAGS := -funwind-tables -Wl,--no-merge-exidx-entries
 ```
 
-**Example**:
+**Example**
 
 *First, build the library, or just add the two files in the list of local files to be built:*
 ```
@@ -88,7 +102,7 @@ Caused by: java.lang.Error: signal 11 (Address not mapped to object) at address 
 void my_function() {
   COFFEE_TRY() {
     /** Try to call 'call_some_native_function'. **/
-    call_some_native_function()
+    call_some_native_function();
   } COFFEE_CATCH() {
     /** Caught a signal. **/
     const char*const message = coffeecatch_get_message();
