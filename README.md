@@ -3,7 +3,7 @@ coffeecatch
 
 **CoffeeCatch**, a *tiny* native POSIX signal handler/catcher (especially useful for JNI code on **Android**/Dalvik)
 
-It allows to "gracefully" recover from a signal (SIGSEGV, SIGBUS...) as if it was an exception. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
+It allows to "gracefully" recover from a **signal** (`SIGSEGV`, `SIGBUS`...) as if it was an **exception**. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
 
 ```c
 /** Enter protected section. **/
@@ -29,6 +29,8 @@ If you want to get useful stack traces, you should build all your libraries with
 ```
 
 **Example**
+
+1. JNI
 
 *First, build the library, or just add the two files in the list of local files to be built:*
 ```
@@ -97,7 +99,10 @@ Caused by: java.lang.Error: signal 11 (Address not mapped to object) at address 
 	at system.lib.libc_so.0xcbd4(pthread_create:0xd0:0)
 ```
 
-*or, outside JNI code*:
+2. Outside JNI code
+
+The COFFEE_TRY()/COFFEE_CATCH()/COFFEE_END() syntax can be used:
+
 ```c
 void my_function() {
   COFFEE_TRY() {
