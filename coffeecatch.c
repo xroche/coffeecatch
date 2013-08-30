@@ -164,6 +164,9 @@ typedef struct native_code_handler_struct {
   const char *expression;
   const char *file;
   int line;
+
+  /* Alarm was fired. */
+  int alarm;
 } native_code_handler_struct;
 
 /* Global crash handler structure. */
@@ -338,6 +341,10 @@ static void coffeecatch_start_alarm(void) {
   (void) alarm(30);
 }
 
+static void coffeecatch_mark_alarm(native_code_handler_struct *const t) {
+  t->alarm = 1;
+}
+
 /* Copy context infos (signal code, etc.) */
 static void coffeecatch_copy_context(native_code_handler_struct *const t,
                                      const int code, siginfo_t *const si,
@@ -382,6 +389,17 @@ static native_code_handler_struct* coffeecatch_get() {
       pthread_getspecific(native_code_thread);
 }
 
+int coffeecatch_cancel_pending_alarm() {
+  native_code_handler_struct *const t = coffeecatch_get();
+  if (t != NULL && t->alarm) {
+    t->alarm = 0;
+    /* "If seconds is 0, a pending alarm request, if any, is canceled." */
+    alarm(0);
+    return 0;
+  }
+  return -1;
+}
+
 /* Internal signal pass-through. Allows to peek the "real" crash before
  * calling the Java handler. Remember than Java needs many of the signals
  * (for the JIT, for test-free NullPointerException handling, etc.)
@@ -389,7 +407,7 @@ static native_code_handler_struct* coffeecatch_get() {
  * called, to be able to know what error caused an issue.
  */
 static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
-                                           void *const sc) {
+                                    void *const sc) {
   native_code_handler_struct *t;
 
   DEBUG(print("caught signal\n"));
@@ -408,6 +426,9 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
   /* Available context ? */
   t = coffeecatch_get();
   if (t != NULL) {
+    /* An alarm() call was triggered. */
+    coffeecatch_mark_alarm(t);
+
     /* Take note of the signal. */
     coffeecatch_copy_context(t, code, si, sc);
 
@@ -439,6 +460,9 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
   /* Available context ? */
   t = coffeecatch_get();
   if (t != NULL) {
+    /* An alarm() call was triggered. */
+    coffeecatch_mark_alarm(t);
+
     /* Take note (real "abort()") */
     coffeecatch_copy_context(t, code, si, sc);
 
