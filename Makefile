@@ -9,7 +9,7 @@ CFILES = coffeecatch.c
 all: gcc test
 
 clean:
-	rm -f *.o *.obj *.so* *.dll *.exe *.pdb *.exp *.lib
+	rm -f *.o *.obj *.so* *.dll *.exe *.pdb *.exp *.lib sample
 
 tar:
 	rm -f coffeecatch.tgz
