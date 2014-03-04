@@ -115,3 +115,8 @@ void my_function() {
   } COFFEE_END();
 }
 ```
+
+* Hints
+
+If you wish to catch signals and continue running your program rather than ending it (this may be dangerous, especially if a crash was spotted within a C library function, such as `malloc()`), use the `coffeecatch_cancel_pending_alarm()` function to cancel the default pending alarm triggered to avoid deadlocks.
+
