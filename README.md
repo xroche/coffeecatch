@@ -1,7 +1,7 @@
 coffeecatch
 ===========
 
-**CoffeeCatch**, a *tiny* native POSIX signal catcher (especially useful for JNI code on **Android**/Dalvik)
+**CoffeeCatch**, a *tiny* native POSIX signal catcher (especially useful for JNI code on **Android**/Dalvik, but it can be used in non-Java projects)
 
 It allows to "gracefully" recover from a **signal** (`SIGSEGV`, `SIGBUS`...) as if it was an **exception**. It will not gracefully recover from allocator/mutexes corruption etc., however, but at least "most" gentle crashes (null pointer dereferencing, integer division, stack overflow etc.) should be handled without too much troubles.
 
@@ -9,11 +9,11 @@ It allows to "gracefully" recover from a **signal** (`SIGSEGV`, `SIGBUS`...) as 
 /** Enter protected section. **/
 COFFEE_TRY() {
   /** Try to call 'call_some_native_function'. **/
-  call_some_native_function();
+  call_some_protected_function();
 } COFFEE_CATCH() {
-  /** Caught a signal. **/
-  fprintf(stderr, "Caught signal: %s\n", coffeecatch_get_message());
-  throw_something();
+  /** Caught a signal: throw Java exception. **/
+  /** In pure C projects, you may print an error message (coffeecatch_get_message()). **/
+  coffeecatch_throw_exception(env);
 } COFFEE_END();
 ```
 
