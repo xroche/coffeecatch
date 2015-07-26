@@ -208,12 +208,14 @@ extern int coffeecatch_cancel_pending_alarm(void);
 
 /** Internal functions & definitions, not to be used directly. **/
 #include <setjmp.h>
+extern int coffeecatch_inside(void);
 extern int coffeecatch_setup(void);
 extern sigjmp_buf* coffeecatch_get_ctx(void);
 extern void coffeecatch_cleanup(void);
 #define COFFEE_TRY()                                \
-  if (coffeecatch_setup() == 0                      \
-      && sigsetjmp(*coffeecatch_get_ctx(), 1) == 0)
+  if (coffeecatch_inside() || \
+      (coffeecatch_setup() == 0 \
+       && sigsetjmp(*coffeecatch_get_ctx(), 1) == 0))
 #define COFFEE_CATCH() else
 #define COFFEE_END() coffeecatch_cleanup()
 /** End of internal functions & definitions. **/
