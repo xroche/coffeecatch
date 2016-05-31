@@ -263,6 +263,7 @@ typedef struct native_code_handler_struct {
   /* Restore point context. */
   sigjmp_buf ctx;
   int ctx_is_set;
+  int reenter;
 
   /* Alternate stack. */
   char *stack_buffer;
@@ -1358,6 +1359,18 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
 }
 
 /**
+ * Returns 1 if we are already inside a coffeecatch block, 0 otherwise.
+ */
+int coffeecatch_inside() {
+  native_code_handler_struct *const t = coffeecatch_get();
+  if (t != NULL && t->reenter > 0) {
+    t->reenter++;
+    return 1;
+  }
+  return 0;
+}
+
+/**
  * Calls coffeecatch_handler_setup(1) to setup a crash handler, mark the
  * context as valid, and return 0 upon success.
  */
@@ -1365,6 +1378,8 @@ int coffeecatch_setup() {
   if (coffeecatch_handler_setup(1) == 0) {
     native_code_handler_struct *const t = coffeecatch_get();
     assert(t != NULL);
+    assert(t->reenter == 0);
+    t->reenter = 1;
     t->ctx_is_set = 1;
     return 0;
   } else {
@@ -1378,7 +1393,12 @@ int coffeecatch_setup() {
 void coffeecatch_cleanup() {
   native_code_handler_struct *const t = coffeecatch_get();
   assert(t != NULL);
-  t->ctx_is_set = 0;
+  assert(t->reenter > 0);
+  t->reenter--;
+  if (t->reenter == 0) {
+    t->ctx_is_set = 0;
+    coffeecatch_handler_cleanup();
+  }
   coffeecatch_handler_cleanup();
 }
 
