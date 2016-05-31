@@ -110,6 +110,8 @@ typedef struct ucontext {
 } ucontext_t;
 #endif
 
+#elif defined(__aarch64__)
+
 #elif defined(__i386__)
 
 /* Taken from Google Breakpad. */
@@ -1123,6 +1125,8 @@ uintptr_t coffeecatch_get_backtrace(ssize_t index) {
 static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc) {
 #if (defined(__arm__))
   return uc->uc_mcontext.arm_pc;
+#elif defined(__aarch64__)
+  return uc->uc_mcontext.pc;
 #elif (defined(__x86_64__))
   return uc->uc_mcontext.gregs[REG_RIP];
 #elif (defined(__i386))
