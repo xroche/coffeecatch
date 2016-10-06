@@ -1397,7 +1397,6 @@ void coffeecatch_cleanup() {
   t->reenter--;
   if (t->reenter == 0) {
     t->ctx_is_set = 0;
-    coffeecatch_handler_cleanup();
   }
   coffeecatch_handler_cleanup();
 }
