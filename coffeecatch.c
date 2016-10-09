@@ -1399,7 +1399,6 @@ void coffeecatch_cleanup() {
     t->ctx_is_set = 0;
     coffeecatch_handler_cleanup();
   }
-  coffeecatch_handler_cleanup();
 }
 
 sigjmp_buf* coffeecatch_get_ctx() {
