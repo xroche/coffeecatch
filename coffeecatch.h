@@ -221,6 +221,26 @@ extern void coffeecatch_cleanup(void);
 /** End of internal functions & definitions. **/
 
 #ifdef __cplusplus
+/**
+ * Sentinel class for cleaning up. Not to be used directly.
+ */
+namespace CoffeeCatch {
+class Sentinel {
+public:
+  Sentinel() {}
+  ~Sentinel() { COFFEE_END(); }
+};
+}
+
+/**
+ * Versions of the above macros that are friendlier to C++.
+ * Uses a sentinel object to clean up after COFFEE_TRY(), so that
+ * even if the code inside the try block returns or throws a C++
+ * exception, COFFEE_END() will still be called.
+ */
+#define COFFEE_CXX_TRY() { volatile CoffeeCatch::Sentinel cc_sentinel; COFFEE_TRY()
+#define COFFEE_CXX_CATCH() COFFEE_CATCH()
+#define COFFEE_CXX_END() }
 }
 #endif
 
