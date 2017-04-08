@@ -1,0 +1,20 @@
+This is test project for https://github.com/xroche/coffeecatch lib.
+
+Usage:
+
+1. git clone or symlink coffeecatch to ./jni/coffeecatch
+2. in 'jni' directory: ndk-build
+3. build app in ide
+4. launch the app
+5. click "Test"
+6. make sure "crash catched" is shown
+7. wait for few seconds to let the app die
+
+   UPDATE: fixed.
+
+   One need to invoke coffeecatch_cancel_pending_alarm():
+   https://github.com/4ntoine/CoffeeCatchDemo/commit/45736307defbf99025bfeef3b99db765e4590003
+
+Issue:
+
+https://github.com/xroche/coffeecatch/issues/2
