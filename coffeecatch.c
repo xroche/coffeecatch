@@ -114,6 +114,8 @@ typedef struct ucontext {
 
 #elif defined(__i386__)
 
+#elif defined(__x86_64__)
+
 #if !defined(__BIONIC_HAVE_UCONTEXT_T)
 /* Taken from Google Breakpad. */
 
