@@ -1340,7 +1340,6 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
                                     uintptr_t offset), void *arg) {
   const native_code_handler_struct* const t = coffeecatch_get();
   if (t != NULL) {
-    size_t i;
 #if (defined(USE_CORKSCREW))
     t_coffeecatch_backtrace_symbols_fun bt;
     bt.fun = fun;
@@ -1351,10 +1350,17 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
       return;
     }
 #endif
+#if (defined(USE_CORKSCREW) || defined(USE_UNWIND))
+    size_t i;
     for(i = 0; i < t->frames_size; i++) {
+#if (defined(USE_CORKSCREW))
       const uintptr_t pc = t->frames[i].absolute_pc;
+#else
+      const uintptr_t pc = t->frames[i];
+#endif
       format_pc_address_cb(pc, fun, arg);
     }
+#endif
   }
 }
 
