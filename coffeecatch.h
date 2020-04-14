@@ -220,6 +220,19 @@ extern void coffeecatch_cleanup(void);
 #define COFFEE_END() coffeecatch_cleanup()
 /** End of internal functions & definitions. **/
 
+
+
+#if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 2 ) )
+//external printers must be provided by application to log coffee messages
+void coffeecatch_print(const char * s);
+void coffeecatch_printf(const char * fmt, ...);
+#endif
+
+// this is debug dump of coffee context state
+void coffeecatch_dump(void);
+
+
+
 #ifdef __cplusplus
 }
 #endif
