@@ -55,9 +55,7 @@
 #include <dlfcn.h>
 #include "coffeecatch.h"
 
-/*#define NDK_DEBUG 1*/
 #if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 1 ) )
-#define DEBUG(A) do { A; } while(0)
 #define FD_ERRNO 2
 static void print(const char *const s) {
   size_t count;
@@ -65,8 +63,29 @@ static void print(const char *const s) {
   /* write() is async-signal-safe. */
   (void) write(FD_ERRNO, s, count);
 }
+#elif ( defined(NDK_DEBUG) && ( NDK_DEBUG == 2 ) )
+
+//with NDK_DEBUG = 2 external printers mayt be provided by application
+//    to log coffee messages
+
+void coffeecatch_print(const char * s);
+void coffeecatch_printf(const char * fmt, ...);
+#define print(...)  coffeecatch_print(__VA_ARGS__)
+#define printf(...) coffeecatch_printf(__VA_ARGS__)
+
+#else
+static void print(const char *const s){
+    printf("%s",s);
+}
+#endif
+
+/*#define NDK_DEBUG 1*/
+#if ( defined(NDK_DEBUG) && ( NDK_DEBUG >= 1 ) )
+#define DEBUG(A) do { A; } while(0)
+#define ERROR(A)   do { A; } while(0)
 #else
 #define DEBUG(A)
+#define ERROR(A)   do { A; } while(0)
 #endif
 
 /* Alternative stack size. */
@@ -453,6 +472,7 @@ static void coffeecatch_revert_alternate_stack(void) {
 #ifndef NO_USE_SIGALTSTACK
   stack_t ss;
   if (sigaltstack(NULL, &ss) == 0) {
+    DEBUG(print("revert_alternate_stack\n"));
     ss.ss_flags &= ~SS_ONSTACK;
     sigaltstack (&ss, NULL);
   }
@@ -517,8 +537,10 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
   t->si = *si;
   if (sc != NULL) {
     ucontext_t *const uc = (ucontext_t*) sc;
-    t->uc = *uc;
+    DEBUG(print("copy context\n"));
+    memcpy(&t->uc, uc, sizeof(t->uc) );
   } else {
+    DEBUG(print("zero context\n"));
     memset(&t->uc, 0, sizeof(t->uc));
   }
 
@@ -587,7 +609,7 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
                                     void *const sc) {
   native_code_handler_struct *t;
 
-  DEBUG(print("caught signal\n"));
+  DEBUG(printf("caught signal sig%d\n", code));
 
   /* Call the "real" Java handler for JIT and internals. */
   coffeecatch_call_old_signal_handler(code, si, sc);
@@ -603,6 +625,8 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
   /* Available context ? */
   t = coffeecatch_get();
   if (t != NULL) {
+    DEBUG(printf("signaling in context $%p\n", t));
+
     /* An alarm() call was triggered. */
     coffeecatch_mark_alarm(t);
 
@@ -627,7 +651,7 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
 
   (void) sc; /* UNUSED */
 
-  DEBUG(print("caught abort\n"));
+  DEBUG(printf("caught abort sig%d\n", code));
 
   /* Ensure we do not deadlock. Default of ALRM is to die.
    * (signal() and alarm() are signal-safe) */
@@ -637,6 +661,8 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
   /* Available context ? */
   t = coffeecatch_get();
   if (t != NULL) {
+    DEBUG(printf("abort in context $%p\n", t));
+
     /* An alarm() call was triggered. */
     coffeecatch_mark_alarm(t);
 
@@ -755,6 +781,7 @@ static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(v
   t->stack_buffer_size = SIG_STACK_BUFFER_SIZE;
   t->stack_buffer = malloc(t->stack_buffer_size);
   if (t->stack_buffer == NULL) {
+    DEBUG(print("cant alloc alternative stack\n"));
     coffeecatch_native_code_handler_struct_free(t);
     return NULL;
   }
@@ -769,6 +796,7 @@ static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(v
   /* Install alternative stack. This is thread-safe */
   if (sigaltstack(&stack, &t->stack_old) != 0) {
 #ifndef USE_SILENT_SIGALTSTACK
+    DEBUG(print("cant install alternative stack\n"));
     coffeecatch_native_code_handler_struct_free(t);
     return NULL;
 #endif
@@ -799,6 +827,7 @@ static int coffeecatch_handler_setup(int setup_thread) {
 
   /* Global initialization failed. */
   if (code != 0) {
+    ERROR(print("catch setup:faled setup_global\n"));
     return -1;
   }
 
@@ -1415,4 +1444,15 @@ void coffeecatch_abort(const char* exp, const char* file, int line) {
     t->line = line;
   }
   abort();
+}
+
+void coffeecatch_dump(){
+    native_code_handler_struct *const t = coffeecatch_get();
+    DEBUG(printf("dump:initialised=%d; ", native_code_g.initialized));
+    if(t) {
+        DEBUG( printf(" reenter=%d; ctx=%d \n", (int)t->reenter, (int)t->ctx_is_set) );
+    }
+    else {
+        DEBUG(print("\n"));
+    }
 }
