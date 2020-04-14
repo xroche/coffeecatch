@@ -89,6 +89,11 @@ static const int native_sig_catch[SIG_CATCH_COUNT + 1]
 /* Maximum value of a caught signal. */
 #define SIG_NUMBER_MAX 32
 
+#ifndef SIG_ABORT_SIGSEGV
+// this allows abort SIGSEGV passing to JNI. Rely COFFEE_CATCH handle it well.
+#define SIG_ABORT_SIGSEGV 0
+#endif
+
 #if defined(__ANDROID__)
 #ifndef ucontext_h_seen
 #define ucontext_h_seen
@@ -685,8 +690,14 @@ static int coffeecatch_handler_setup_global(void) {
     /* Setup signal handlers for SIGABRT (Java calls abort()) and others. **/
     for (i = 0; native_sig_catch[i] != 0; i++) {
       const int sig = native_sig_catch[i];
-      const struct sigaction * const action =
-          sig == SIGABRT ? &sa_abort : &sa_pass;
+      const struct sigaction * action = &sa_pass;
+      switch(sig){
+          case SIGABRT:
+#if SIG_ABORT_SIGSEGV
+          case SIGSEGV:
+#endif
+              action = &sa_abort;
+      }
       assert(sig < SIG_NUMBER_MAX);
       if (sigaction(sig, action, &native_code_g.sa_old[sig]) != 0) {
         return -1;
