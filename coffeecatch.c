@@ -88,6 +88,10 @@ static void print(const char *const s){
 #define ERROR(A)   do { A; } while(0)
 #endif
 
+#define ASSERT( A ) do { if (!(A)) ERROR(printf("%d:%s\n", __LINE__, #A)); assert(A); } while(0)
+
+
+
 /* Alternative stack size. */
 #define SIG_STACK_BUFFER_SIZE SIGSTKSZ
 
@@ -713,7 +717,7 @@ static int coffeecatch_handler_setup_global(void) {
       const int sig = native_sig_catch[i];
       const struct sigaction * const action =
           sig == SIGABRT ? &sa_abort : &sa_pass;
-      assert(sig < SIG_NUMBER_MAX);
+      ASSERT(sig < SIG_NUMBER_MAX);
       if (sigaction(sig, action, &native_code_g.sa_old[sig]) != 0) {
         return -1;
       }
@@ -870,7 +874,7 @@ static int coffeecatch_handler_cleanup() {
 
     /* Erase thread-specific value now (detach). */
     if (pthread_setspecific(native_code_thread, NULL) != 0) {
-      assert(! "pthread_setspecific() failed");
+      ASSERT(! "pthread_setspecific() failed");
     }
 
     /* Free handler and reset slternate stack */
@@ -883,9 +887,9 @@ static int coffeecatch_handler_cleanup() {
 
   /* Cleanup globals. */
   if (pthread_mutex_lock(&native_code_g.mutex) != 0) {
-    assert(! "pthread_mutex_lock() failed");
+    ASSERT(! "pthread_mutex_lock() failed");
   }
-  assert(native_code_g.initialized != 0);
+  ASSERT(native_code_g.initialized > 0);
   if (--native_code_g.initialized == 0) {
     size_t i;
 
@@ -894,7 +898,7 @@ static int coffeecatch_handler_cleanup() {
     /* Restore signal handler. */
     for(i = 0; native_sig_catch[i] != 0; i++) {
       const int sig = native_sig_catch[i];
-      assert(sig < SIG_NUMBER_MAX);
+      ASSERT(sig < SIG_NUMBER_MAX);
       if (sigaction(sig, &native_code_g.sa_old[sig], NULL) != 0) {
         return -1;
       }
@@ -906,13 +910,13 @@ static int coffeecatch_handler_cleanup() {
 
     /* Delete thread var. */
     if (pthread_key_delete(native_code_thread) != 0) {
-      assert(! "pthread_key_delete() failed");
+      ASSERT(! "pthread_key_delete() failed");
     }
 
     DEBUG(print("removed global signal handlers\n"));
   }
   if (pthread_mutex_unlock(&native_code_g.mutex) != 0) {
-    assert(! "pthread_mutex_unlock() failed");
+    ASSERT(! "pthread_mutex_unlock() failed");
   }
 
   return 0;
@@ -1265,7 +1269,7 @@ const char* coffeecatch_get_message() {
     if ((t->code == SIGABRT
 #ifdef __ANDROID__
         /* See Android BUG #16672:
-         * "C assert() failure causes SIGSEGV when it should cause SIGABRT" */
+         * "C ASSERT() failure causes SIGSEGV when it should cause SIGABRT" */
         || (t->code == SIGSEGV && (uintptr_t) t->si.si_addr == 0xdeadbaad)
 #endif
         ) && t->expression != NULL) {
@@ -1406,8 +1410,8 @@ int coffeecatch_inside() {
 int coffeecatch_setup() {
   if (coffeecatch_handler_setup(1) == 0) {
     native_code_handler_struct *const t = coffeecatch_get();
-    assert(t != NULL);
-    assert(t->reenter == 0);
+    ASSERT(t != NULL);
+    ASSERT(t->reenter == 0);
     t->reenter = 1;
     t->ctx_is_set = 1;
     return 0;
@@ -1421,8 +1425,8 @@ int coffeecatch_setup() {
  */
 void coffeecatch_cleanup() {
   native_code_handler_struct *const t = coffeecatch_get();
-  assert(t != NULL);
-  assert(t->reenter > 0);
+  ASSERT(t != NULL);
+  ASSERT(t->reenter > 0);
   t->reenter--;
   if (t->reenter == 0) {
     t->ctx_is_set = 0;
@@ -1432,7 +1436,7 @@ void coffeecatch_cleanup() {
 
 sigjmp_buf* coffeecatch_get_ctx() {
   native_code_handler_struct* t = coffeecatch_get();
-  assert(t != NULL);
+  ASSERT(t != NULL);
   return &t->ctx;
 }
 
