@@ -34,6 +34,9 @@
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
 
+// need by signal:ucontext for registers REG_xxx declare
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -304,6 +307,9 @@ static native_code_global_struct native_code_g =
 pthread_key_t native_code_thread;
 
 #if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
+#ifndef _URC_OK
+#define _URC_OK _URC_NO_REASON
+#endif
 /* Unwind callback */
 static _Unwind_Reason_Code
 coffeecatch_unwind_callback(struct _Unwind_Context* context, void* arg) {
@@ -974,10 +980,14 @@ static const char* coffeecatch_desc_sig(int sig, int code) {
     break;
   case SIGTRAP:
     switch(code) {
+#ifdef TRAP_BRKPT
     case TRAP_BRKPT:
       return "Process breakpoint";
+#endif
+#ifdef TRAP_TRACE
     case TRAP_TRACE:
       return "Process trace trap";
+#endif
     default:
       return "Trap";
     }
