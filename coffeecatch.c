@@ -31,6 +31,10 @@
 #define USE_LIBUNWIND
 #endif
 
+#ifdef __APPLE__
+#define USE_UNWIND
+#endif
+
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
 
@@ -54,6 +58,11 @@
 #include <pthread.h>
 #include <dlfcn.h>
 #include "coffeecatch.h"
+
+#ifndef SIGPOLL
+// SIGPOLL is SIGIO on some platforms
+#define SIGPOLL SIGIO
+#endif
 
 /*#define NDK_DEBUG 1*/
 #if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 1 ) )
@@ -1131,7 +1140,11 @@ static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc) {
 #elif defined(__aarch64__)
   return uc->uc_mcontext.pc;
 #elif (defined(__x86_64__))
+  #if defined(__APPLE__)
+  return uc->uc_mcontext->__ss.__rip;
+  #else
   return uc->uc_mcontext.gregs[REG_RIP];
+  #endif
 #elif (defined(__i386))
   return uc->uc_mcontext.gregs[REG_EIP];
 #elif (defined (__ppc__)) || (defined (__powerpc__))
@@ -1354,7 +1367,11 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
     }
 #endif
     for(i = 0; i < t->frames_size; i++) {
-      const uintptr_t pc = t->frames[i].absolute_pc;
+      const uintptr_t pc = t->frames[i]
+#if (defined(USE_CORKSCREW))
+        .absolute_pc
+#endif
+        ;
       format_pc_address_cb(pc, fun, arg);
     }
   }
