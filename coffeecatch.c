@@ -31,6 +31,10 @@
 #define USE_LIBUNWIND
 #endif
 
+#ifdef __APPLE__
+#define USE_UNWIND
+#endif
+
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
 
@@ -54,6 +58,11 @@
 #include <pthread.h>
 #include <dlfcn.h>
 #include "coffeecatch.h"
+
+#ifndef SIGPOLL
+// SIGPOLL is SIGIO on some platforms
+#define SIGPOLL SIGIO
+#endif
 
 /*#define NDK_DEBUG 1*/
 #if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 1 ) )
@@ -114,6 +123,9 @@ typedef struct ucontext {
 
 #elif defined(__i386__)
 
+#elif defined(__x86_64__)
+
+#if !defined(__BIONIC_HAVE_UCONTEXT_T)
 /* Taken from Google Breakpad. */
 
 /* 80-bit floating-point register */
@@ -166,7 +178,6 @@ enum {
   REG_SS,
 };
 
-#if !defined(__BIONIC_HAVE_UCONTEXT_T)
 typedef struct ucontext {
   uint32_t uc_flags;
   struct ucontext* uc_link;
@@ -1126,8 +1137,12 @@ uintptr_t coffeecatch_get_backtrace(ssize_t index) {
 static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc) {
 #if (defined(__arm__))
   return uc->uc_mcontext.arm_pc;
-#elif defined(__aarch64__)
+#elif (defined(__APPLE__) && defined(__aarch64__))
+  return uc->uc_mcontext->__ss.__pc;
+#elif (defined(__aarch64__))
   return uc->uc_mcontext.pc;
+#elif (defined(__APPLE__) && defined(__x86_64__))
+  return uc->uc_mcontext->__ss.__rip;
 #elif (defined(__x86_64__))
   return uc->uc_mcontext.gregs[REG_RIP];
 #elif (defined(__i386))
@@ -1352,7 +1367,11 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
     }
 #endif
     for(i = 0; i < t->frames_size; i++) {
-      const uintptr_t pc = t->frames[i].absolute_pc;
+      const uintptr_t pc = t->frames[i]
+#if (defined(USE_CORKSCREW))
+        .absolute_pc
+#endif
+        ;
       format_pc_address_cb(pc, fun, arg);
     }
   }
