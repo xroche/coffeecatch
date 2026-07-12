@@ -31,6 +31,6 @@ test:
 		-D_REENTRANT \
 		sample.c -o sample.o
 	gcc -fPIC -O3 -Wl,-O1 \
-		-lcoffeecatch -L. \
-		sample.o -o sample
+		sample.o -o sample \
+		-L. -lcoffeecatch
 
