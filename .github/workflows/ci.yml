@@ -1,0 +1,77 @@
+# Build and test CoffeeCatch across compilers, architectures, and UBSan.
+# The library ships as a hand-written Makefile, so CI drives it directly: that
+# is exactly what rotted unnoticed before (transposed calloc args and a stale
+# link order broke `make` on modern toolchains, with no CI to catch it).
+# macOS is not covered: the ucontext register access and a few signals in
+# coffeecatch.c are Linux/Android-only and do not compile on Darwin. The arm64
+# Linux leg is the closest proxy for the Android arm64 target.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: the workflow only needs to read the repo.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch or PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build+test (${{ matrix.arch }}, ${{ matrix.cc }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86-64, runner: ubuntu-24.04,     cc: gcc }
+          - { arch: x86-64, runner: ubuntu-24.04,     cc: clang }
+          - { arch: arm64,  runner: ubuntu-24.04-arm, cc: gcc }
+          - { arch: arm64,  runner: ubuntu-24.04-arm, cc: clang }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang
+
+      # `make all` builds the static lib, shared lib, tests, and sample under
+      # the chosen compiler; `make check` runs the test suite.
+      - name: Build and test
+        run: make all check CC=${{ matrix.cc }}
+
+  ubsan:
+    name: sanitizer (ubsan, gcc)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+
+      # UBSan only, on purpose: coffeecatch installs its own SIGSEGV/SIGABRT/...
+      # handlers and a per-thread alternate signal stack, which ASan's own
+      # signal handling and altstack cannot coexist with (every intentional
+      # crash then dies uncaught). UBSan installs no signal handlers, so it
+      # runs the suite as-is and still checks the C for alignment, integer
+      # overflow, shift, and other UB. Flags ride in via CFLAGS/LDFLAGS, which
+      # the Makefile appends its mandatory flags onto; every finding aborts.
+      - name: Build and run under UBSan
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -euo pipefail
+          make check \
+            CFLAGS="-O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+            LDFLAGS="-fsanitize=undefined"
