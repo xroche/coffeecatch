@@ -134,23 +134,26 @@ static NOINLINE int test_no_crash(void) {
   return 0;
 }
 
-/* A clean catch must leave the thread able to protect another block. */
+/* A clean catch must leave the thread able to protect another block. Assert the
+ * caught signal, not just that the handler ran: the CATCH branch also runs when
+ * coffeecatch_setup() fails (body skipped, no crash), so a bare "it ran" check
+ * would pass even if handler installation regressed and nothing was trapped. */
 static NOINLINE int test_reentry(void) {
   volatile int first = 0, second = 0;
   COFFEE_TRY() {
     CRASH();
   } COFFEE_CATCH() {
-    first = 1;
+    first = coffeecatch_get_signal();
     coffeecatch_cancel_pending_alarm();
   } COFFEE_END();
   COFFEE_TRY() {
     CRASH();
   } COFFEE_CATCH() {
-    second = 1;
+    second = coffeecatch_get_signal();
     coffeecatch_cancel_pending_alarm();
   } COFFEE_END();
-  CHECK(first);
-  CHECK(second);
+  CHECK(first == SIGSEGV);
+  CHECK(second == SIGSEGV);
   return 0;
 }
 
