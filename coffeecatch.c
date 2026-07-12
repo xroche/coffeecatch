@@ -50,6 +50,14 @@
 #endif 
 #if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
 #include <unwind.h>
+/* "Continue unwinding" reason code: ARM EHABI (32-bit ARM) spells it _URC_OK,
+ * the Itanium/LLVM ABI (arm64, x86, glibc) _URC_NO_REASON. Both are 0, and both
+ * are enum constants invisible to #if, so gate on the ABI. */
+#if defined(__arm__)
+#define COFFEE_URC_CONTINUE _URC_OK
+#else
+#define COFFEE_URC_CONTINUE _URC_NO_REASON
+#endif
 #endif
 #include <pthread.h>
 #include <dlfcn.h>
@@ -237,6 +245,11 @@ typedef struct native_code_handler_struct {
 #endif
   size_t frames_size;
   size_t frames_skip;
+#ifdef USE_UNWIND
+  /* Nested guard: siglongjmp target if the unwinder itself faults. */
+  sigjmp_buf unwind_ctx;
+  volatile sig_atomic_t unwind_guarded;
+#endif
 
   /* Custom assertion failures. */
   const char *expression;
@@ -277,7 +290,7 @@ coffeecatch_unwind_callback(struct _Unwind_Context* context, void* arg) {
     return _URC_END_OF_STACK;
   } else {
     DEBUG(print("returned _URC_OK\n"));
-    return _URC_OK;
+    return COFFEE_URC_CONTINUE;
   }
 }
 #endif
@@ -460,20 +473,11 @@ static void coffeecatch_mark_alarm(native_code_handler_struct *const t) {
   t->alarm = 1;
 }
 
-/* Copy context infos (signal code, etc.) */
-static void coffeecatch_copy_context(native_code_handler_struct *const t,
-                                     const int code, siginfo_t *const si,
-                                     void *const sc) {
-  t->code = code;
-  t->si = *si;
-  if (sc != NULL) {
-    ucontext_t *const uc = (ucontext_t*) sc;
-    t->uc = *uc;
-  } else {
-    memset(&t->uc, 0, sizeof(t->uc));
-  }
-
 #ifdef USE_UNWIND
+/* Best-effort backtrace extraction into t->frames. The unwinder can fault on a
+ * corrupt stack, so it must only ever run under coffeecatch_fill_backtrace(). */
+static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
+                                          siginfo_t *const si, void *const sc) {
   /* Frame buffer initial position. */
   t->frames_size = 0;
 
@@ -485,6 +489,8 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
   t->frames_size = coffeecatch_backtrace_signal(si, sc, t->frames, 0,
                                                 BACKTRACE_FRAMES_MAX);
 #else
+  (void) si;
+  (void) sc;
   /* Unwind frames (equivalent to backtrace()) */
   _Unwind_Backtrace(coffeecatch_unwind_callback, t);
 #endif
@@ -501,7 +507,71 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
     }
   }
 #endif
+}
 
+static native_code_handler_struct* coffeecatch_get(void);
+
+/* siglongjmp target when the unwinder itself faults on a corrupt stack. */
+static void coffeecatch_unwind_guard(const int code, siginfo_t *const si,
+                                     void *const sc) {
+  native_code_handler_struct *const t = coffeecatch_get();
+  (void) si;
+  (void) sc;
+  if (t != NULL && t->unwind_guarded) {
+    siglongjmp(t->unwind_ctx, 1);
+  }
+  /* Not ours to swallow: restore the default fatal disposition. */
+  signal(code, SIG_DFL);
+  raise(code);
+}
+
+/* Run backtrace extraction under a nested SEGV/BUS guard, so a fault inside the
+ * unwinder ends with the frames gathered so far instead of killing the process.
+ * The first crash masked its signal, so unblock + SA_NODEFER let a re-fault in. */
+static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
+                                       siginfo_t *const si, void *const sc) {
+  struct sigaction guard, old_segv, old_bus;
+  sigset_t unblock, old_mask;
+
+  memset(&guard, 0, sizeof(guard));
+  sigemptyset(&guard.sa_mask);
+  guard.sa_sigaction = coffeecatch_unwind_guard;
+  guard.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+  sigaction(SIGSEGV, &guard, &old_segv);
+  sigaction(SIGBUS, &guard, &old_bus);
+
+  sigemptyset(&unblock);
+  sigaddset(&unblock, SIGSEGV);
+  sigaddset(&unblock, SIGBUS);
+  sigprocmask(SIG_UNBLOCK, &unblock, &old_mask);
+
+  t->unwind_guarded = 1;
+  if (sigsetjmp(t->unwind_ctx, 1) == 0) {
+    coffeecatch_extract_backtrace(t, si, sc);
+  }
+  t->unwind_guarded = 0;
+
+  sigprocmask(SIG_SETMASK, &old_mask, NULL);
+  sigaction(SIGSEGV, &old_segv, NULL);
+  sigaction(SIGBUS, &old_bus, NULL);
+}
+#endif
+
+/* Copy context infos (signal code, etc.) */
+static void coffeecatch_copy_context(native_code_handler_struct *const t,
+                                     const int code, siginfo_t *const si,
+                                     void *const sc) {
+  t->code = code;
+  t->si = *si;
+  if (sc != NULL) {
+    ucontext_t *const uc = (ucontext_t*) sc;
+    t->uc = *uc;
+  } else {
+    memset(&t->uc, 0, sizeof(t->uc));
+  }
+
+#ifdef USE_UNWIND
+  coffeecatch_fill_backtrace(t, si, sc);
   if (t->frames_size != 0) {
     DEBUG(print("called _Unwind_Backtrace()\n"));
   } else {
