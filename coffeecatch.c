@@ -209,6 +209,12 @@ typedef struct ucontext {
 } ucontext_t;
 #endif
 
+#elif defined(__x86_64__)
+
+/* Modern bionic provides ucontext_t / mcontext_t for x86_64 natively (as it does
+   for __aarch64__ above), so no hand-rolled fallback typedef is needed. The PC is
+   read below via uc_mcontext.gregs[REG_RIP]. */
+
 #else
 #error "Architecture is not supported (unknown ucontext layout)"
 #endif
