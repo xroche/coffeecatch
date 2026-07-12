@@ -114,66 +114,11 @@ typedef struct ucontext {
 
 #elif defined(__i386__)
 
-/* Taken from Google Breakpad. */
-
-/* 80-bit floating-point register */
-struct _libc_fpreg {
-  unsigned short significand[4];
-  unsigned short exponent;
-};
-
-/* Simple floating-point state, see FNSTENV instruction */
-struct _libc_fpstate {
-  unsigned long cw;
-  unsigned long sw;
-  unsigned long tag;
-  unsigned long ipoff;
-  unsigned long cssel;
-  unsigned long dataoff;
-  unsigned long datasel;
-  struct _libc_fpreg _st[8];
-  unsigned long status;
-};
-
-typedef uint32_t  greg_t;
-
-typedef struct {
-  uint32_t gregs[19];
-  struct _libc_fpstate* fpregs;
-  uint32_t oldmask;
-  uint32_t cr2;
-} mcontext_t;
-
-enum {
-  REG_GS = 0,
-  REG_FS,
-  REG_ES,
-  REG_DS,
-  REG_EDI,
-  REG_ESI,
-  REG_EBP,
-  REG_ESP,
-  REG_EBX,
-  REG_EDX,
-  REG_ECX,
-  REG_EAX,
-  REG_TRAPNO,
-  REG_ERR,
-  REG_EIP,
-  REG_CS,
-  REG_EFL,
-  REG_UESP,
-  REG_SS,
-};
-
-#if !defined(__BIONIC_HAVE_UCONTEXT_T)
-typedef struct ucontext {
-  uint32_t uc_flags;
-  struct ucontext* uc_link;
-  stack_t uc_stack;
-  mcontext_t uc_mcontext;
-} ucontext_t;
-#endif
+/* Modern bionic provides ucontext_t / mcontext_t / _libc_fpreg / REG_* for i386
+   natively (as for __aarch64__ and __x86_64__), so no hand-rolled typedefs are
+   needed. The old Google-Breakpad copies here now collide with the NDK sysroot
+   (redefinition of _libc_fpreg, mcontext_t, REG_GS...). The PC is read below via
+   uc_mcontext.gregs[REG_EIP]. */
 
 #elif defined(__mips__)
 
