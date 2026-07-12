@@ -677,7 +677,7 @@ static int coffeecatch_handler_setup_global(void) {
     sa_pass.sa_flags = SA_SIGINFO | SA_ONSTACK;
 
     /* Allocate */
-    native_code_g.sa_old = calloc(sizeof(struct sigaction), SIG_NUMBER_MAX);
+    native_code_g.sa_old = calloc(SIG_NUMBER_MAX, sizeof(struct sigaction));
     if (native_code_g.sa_old == NULL) {
       return -1;
     }
@@ -743,7 +743,7 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
 static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(void) {
   stack_t stack;
   native_code_handler_struct *const t =
-    calloc(sizeof(native_code_handler_struct), 1);
+    calloc(1, sizeof(native_code_handler_struct));
 
   if (t == NULL) {
     return NULL;
@@ -1338,10 +1338,11 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
                                     uintptr_t addr,
                                     const char *function,
                                     uintptr_t offset), void *arg) {
+#ifdef USE_UNWIND
   const native_code_handler_struct* const t = coffeecatch_get();
   if (t != NULL) {
     size_t i;
-#if (defined(USE_CORKSCREW))
+#ifdef USE_CORKSCREW
     t_coffeecatch_backtrace_symbols_fun bt;
     bt.fun = fun;
     bt.arg = arg;
@@ -1352,10 +1353,18 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
     }
 #endif
     for(i = 0; i < t->frames_size; i++) {
+#ifdef USE_CORKSCREW
       const uintptr_t pc = t->frames[i].absolute_pc;
+#else
+      const uintptr_t pc = t->frames[i];
+#endif
       format_pc_address_cb(pc, fun, arg);
     }
   }
+#else
+  (void) fun;
+  (void) arg;
+#endif
 }
 
 /**
