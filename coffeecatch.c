@@ -442,6 +442,11 @@ static void coffeecatch_try_jump_userland(native_code_handler_struct*
 
     /* Invalidate the context */
     t->ctx_is_set = 0;
+#ifdef USE_UNWIND
+    /* Jumping out of the unwinder abandons its frame: disarm the guard, or a
+     * later crash would siglongjmp() into a dead one. */
+    t->unwind_guarded = 0;
+#endif
 
     /* We need to revert the alternate stack before jumping. */
     coffeecatch_revert_alternate_stack();
@@ -512,50 +517,27 @@ static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
 #endif
 }
 
-static native_code_handler_struct* coffeecatch_get(void);
-
-/* siglongjmp target when the unwinder itself faults on a corrupt stack. */
-static void coffeecatch_unwind_guard(const int code, siginfo_t *const si,
-                                     void *const sc) {
-  native_code_handler_struct *const t = coffeecatch_get();
-  (void) si;
-  (void) sc;
-  if (t != NULL && t->unwind_guarded) {
-    siglongjmp(t->unwind_ctx, 1);
-  }
-  /* Not ours to swallow: restore the default fatal disposition. */
-  signal(code, SIG_DFL);
-  raise(code);
-}
-
-/* Unwind under a nested SEGV/BUS guard: a fault inside it keeps the frames
- * gathered so far. The first crash masked the signal: unblock + SA_NODEFER. */
+/* Unwind with t->unwind_guarded armed: if the unwinder faults on a corrupt
+ * stack, the crash handler siglongjmp()s back here with the frames gathered so
+ * far. Entering the handler masked the signal, so unblock it for this thread
+ * only; a process-wide sigaction() here would hijack the other threads. */
 static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
                                        siginfo_t *const si, void *const sc) {
-  struct sigaction guard, old_segv, old_bus;
   sigset_t unblock, old_mask;
-
-  memset(&guard, 0, sizeof(guard));
-  sigemptyset(&guard.sa_mask);
-  guard.sa_sigaction = coffeecatch_unwind_guard;
-  guard.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
-  sigaction(SIGSEGV, &guard, &old_segv);
-  sigaction(SIGBUS, &guard, &old_bus);
 
   sigemptyset(&unblock);
   sigaddset(&unblock, SIGSEGV);
   sigaddset(&unblock, SIGBUS);
-  sigprocmask(SIG_UNBLOCK, &unblock, &old_mask);
+  pthread_sigmask(SIG_UNBLOCK, &unblock, &old_mask);
 
-  t->unwind_guarded = 1;
+  /* Arm only once the jump target is stored, never before. */
   if (sigsetjmp(t->unwind_ctx, 1) == 0) {
+    t->unwind_guarded = 1;
     coffeecatch_extract_backtrace(t, si, sc);
   }
   t->unwind_guarded = 0;
 
-  sigprocmask(SIG_SETMASK, &old_mask, NULL);
-  sigaction(SIGSEGV, &old_segv, NULL);
-  sigaction(SIGBUS, &old_bus, NULL);
+  pthread_sigmask(SIG_SETMASK, &old_mask, NULL);
 }
 #endif
 
@@ -612,15 +594,20 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
 
   DEBUG(print("caught signal\n"));
 
+#ifdef USE_UNWIND
+  /* The unwinder faulted on a corrupt stack: back out with what we have. */
+  t = coffeecatch_get();
+  if (t != NULL && t->unwind_guarded) {
+    siglongjmp(t->unwind_ctx, 1);
+  }
+#endif
+
   /* Call the "real" Java handler for JIT and internals. */
   coffeecatch_call_old_signal_handler(code, si, sc);
 
   /* Still here ?
    * FIXME TODO: This is the Dalvik behavior - but is it the SunJVM one ? */
 
-  /* Ensure we do not deadlock. Default of ALRM is to die.
-   * (signal() and alarm() are signal-safe) */
-  signal(code, SIG_DFL);
   coffeecatch_start_alarm();
 
   /* Available context ? */
@@ -652,9 +639,14 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
 
   DEBUG(print("caught abort\n"));
 
-  /* Ensure we do not deadlock. Default of ALRM is to die.
-   * (signal() and alarm() are signal-safe) */
-  signal(code, SIG_DFL);
+#ifdef USE_UNWIND
+  /* The unwinder aborted (a symbolizer assertion): back out with what we have. */
+  t = coffeecatch_get();
+  if (t != NULL && t->unwind_guarded) {
+    siglongjmp(t->unwind_ctx, 1);
+  }
+#endif
+
   coffeecatch_start_alarm();
 
   /* Available context ? */
@@ -676,6 +668,8 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
 
   /* Nope. (abort() is signal-safe) */
   DEBUG(print("calling abort()\n"));
+  /* Only now: SIG_DFL is process-wide, and it keeps abort() from re-entering us. */
+  signal(code, SIG_DFL);
   abort();
 }
 
