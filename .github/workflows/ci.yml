@@ -48,6 +48,24 @@ jobs:
       - name: Build and test
         run: make all check CC=${{ matrix.cc }}
 
+  unwind:
+    name: build+test (x86-64, gcc, USE_UNWIND)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+
+      # USE_UNWIND is normally Android-only, so the _Unwind_Backtrace path and
+      # its nested-fault guard never reach the legs above. Forcing it on here
+      # is the only coverage this code gets outside an NDK build.
+      - name: Build and test with USE_UNWIND
+        run: make all check CPPFLAGS=-DUSE_UNWIND CFLAGS="-O2 -g -funwind-tables"
+
   ubsan:
     name: sanitizer (ubsan, gcc)
     runs-on: ubuntu-24.04
