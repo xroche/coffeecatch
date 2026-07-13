@@ -236,7 +236,25 @@ public:
  * Versions of the above macros that are friendlier to C++.
  * Uses a sentinel object to clean up after COFFEE_TRY(), so that
  * even if the code inside the try block returns or throws a C++
- * exception, COFFEE_END() will still be called.
+ * exception, COFFEE_END() will still be called. This lifts the plain-macro
+ * restriction against "return" inside the protected block.
+ *
+ * These unify *cleanup*, not *catching*: COFFEE_CXX_CATCH() still catches only
+ * signals (never a C++ throw), and a C++ "catch" still catches only C++
+ * exceptions (never a signal). The two mechanisms remain separate.
+ *
+ * Caveat: recovery from a signal is performed with siglongjmp(), which does
+ * NOT unwind the C++ frames between COFFEE_CXX_TRY() and the faulting
+ * instruction. Destructors of objects in those frames are skipped -- locks are
+ * left held, resources leak -- and the C++ standard makes this undefined
+ * behavior if such a destructor is non-trivial (see the subclause covering
+ * <csetjmp>, whose stable name in the standard is [support.runtime]). It works
+ * in practice because
+ * siglongjmp() merely restores the saved register/stack context (it does not
+ * walk unwind tables or run destructors), so the skipped objects are simply
+ * leaked rather than causing a crash. The alarm() armed on catch is still
+ * pending. Treat the catch block as last rites: log, then exit. Do not use
+ * this to recover and continue.
  */
 #define COFFEE_CXX_TRY() { volatile CoffeeCatch::Sentinel cc_sentinel; COFFEE_TRY()
 #define COFFEE_CXX_CATCH() COFFEE_CATCH()
