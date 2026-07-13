@@ -50,9 +50,8 @@
 #endif 
 #if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
 #include <unwind.h>
-/* "Continue unwinding" reason code: ARM EHABI (32-bit ARM) spells it _URC_OK,
- * the Itanium/LLVM ABI (arm64, x86, glibc) _URC_NO_REASON. Both are 0, and both
- * are enum constants invisible to #if, so gate on the ABI. */
+/* "Continue unwinding" is _URC_OK on ARM EHABI, _URC_NO_REASON on the Itanium
+ * ABI; both are 0, and both are enum constants #if cannot see -- so gate on ABI. */
 #if defined(__arm__)
 #define COFFEE_URC_CONTINUE _URC_OK
 #else
@@ -474,8 +473,7 @@ static void coffeecatch_mark_alarm(native_code_handler_struct *const t) {
 }
 
 #ifdef USE_UNWIND
-/* Best-effort backtrace extraction into t->frames. The unwinder can fault on a
- * corrupt stack, so it must only ever run under coffeecatch_fill_backtrace(). */
+/* May fault on a corrupt stack: only run under coffeecatch_fill_backtrace(). */
 static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
                                           siginfo_t *const si, void *const sc) {
   /* Frame buffer initial position. */
@@ -525,9 +523,8 @@ static void coffeecatch_unwind_guard(const int code, siginfo_t *const si,
   raise(code);
 }
 
-/* Run backtrace extraction under a nested SEGV/BUS guard, so a fault inside the
- * unwinder ends with the frames gathered so far instead of killing the process.
- * The first crash masked its signal, so unblock + SA_NODEFER let a re-fault in. */
+/* Unwind under a nested SEGV/BUS guard: a fault inside it keeps the frames
+ * gathered so far. The first crash masked the signal: unblock + SA_NODEFER. */
 static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
                                        siginfo_t *const si, void *const sc) {
   struct sigaction guard, old_segv, old_bus;
