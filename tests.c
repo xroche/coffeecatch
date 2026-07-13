@@ -226,18 +226,25 @@ static NOINLINE int test_old_handler_plain(void) {
   return 0;
 }
 
+static pthread_barrier_t crash_barrier;
+
 static NOINLINE void *thread_body(void *arg) {
   volatile int *const caught = (volatile int *) arg;
   COFFEE_TRY() {
+    /* Crash only once every thread holds a catch context: a serialized run
+     * would let the handlers be reinstalled between threads, hiding a
+     * process-wide disarm. */
+    pthread_barrier_wait(&crash_barrier);
     CRASH();
   } COFFEE_CATCH() {
-    *caught = 1;
+    *caught = coffeecatch_get_signal() == SIGSEGV ? 1 : -1;
     coffeecatch_cancel_pending_alarm();
   } COFFEE_END();
   return NULL;
 }
 
-/* The handler is documented thread-safe: concurrent catches must all succeed. */
+/* The handler is documented thread-safe: concurrent catches must all succeed,
+ * and each must report its own signal. */
 static NOINLINE int test_threads(void) {
   enum { N = 8 };
   pthread_t th[N];
@@ -246,15 +253,58 @@ static NOINLINE int test_threads(void) {
   for (i = 0; i < N; i++) {
     caught[i] = 0;
   }
+  CHECK(pthread_barrier_init(&crash_barrier, NULL, N) == 0);
   for (i = 0; i < N; i++) {
     CHECK(pthread_create(&th[i], NULL, thread_body, (void *) &caught[i]) == 0);
   }
   for (i = 0; i < N; i++) {
     CHECK(pthread_join(th[i], NULL) == 0);
   }
+  CHECK(pthread_barrier_destroy(&crash_barrier) == 0);
   for (i = 0; i < N; i++) {
-    CHECK(caught[i]);
+    CHECK(caught[i] == 1);
   }
+  return 0;
+}
+
+static volatile int holder_armed;
+
+static NOINLINE void *holder_body(void *arg) {
+  (void) arg;
+  COFFEE_TRY() {
+    holder_armed = 1;
+    for (;;) {
+      usleep(1000);
+    }
+  } COFFEE_CATCH() {
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  return NULL;
+}
+
+/* The give-up path: a crash with no catch context on this thread must still
+ * kill the process, even while another thread keeps the handlers installed. */
+static NOINLINE int test_no_context_dies(void) {
+  pid_t pid;
+  int status = 0;
+
+  fflush(NULL);
+  pid = fork();
+  CHECK(pid >= 0);
+  if (pid == 0) {
+    pthread_t th;
+    pthread_create(&th, NULL, holder_body, NULL);
+    while (!holder_armed) {
+      usleep(1000);
+    }
+    usleep(50000);
+    CRASH();          /* outside any COFFEE_TRY: must not be swallowed */
+    _exit(0);         /* reached only if the crash was wrongly caught */
+  }
+  alarm(20);          /* a handler re-entry loop would hang here */
+  CHECK(waitpid(pid, &status, 0) == pid);
+  alarm(0);
+  CHECK(WIFSIGNALED(status));
   return 0;
 }
 
@@ -279,6 +329,7 @@ static const struct test tests[] = {
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
   { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
   { "concurrent catches (threads)", test_threads, NULL },
+  { "no context: crash still kills", test_no_context_dies, NULL },
 };
 
 static int run_forked(const struct test *t) {

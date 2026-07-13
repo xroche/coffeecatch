@@ -442,6 +442,11 @@ static void coffeecatch_try_jump_userland(native_code_handler_struct*
 
     /* Invalidate the context */
     t->ctx_is_set = 0;
+#ifdef USE_UNWIND
+    /* Jumping out of the unwinder abandons its frame: disarm the guard, or a
+     * later crash would siglongjmp() into a dead one. */
+    t->unwind_guarded = 0;
+#endif
 
     /* We need to revert the alternate stack before jumping. */
     coffeecatch_revert_alternate_stack();
@@ -525,8 +530,9 @@ static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
   sigaddset(&unblock, SIGBUS);
   pthread_sigmask(SIG_UNBLOCK, &unblock, &old_mask);
 
-  t->unwind_guarded = 1;
+  /* Arm only once the jump target is stored, never before. */
   if (sigsetjmp(t->unwind_ctx, 1) == 0) {
+    t->unwind_guarded = 1;
     coffeecatch_extract_backtrace(t, si, sc);
   }
   t->unwind_guarded = 0;
@@ -632,6 +638,14 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
   (void) sc; /* UNUSED */
 
   DEBUG(print("caught abort\n"));
+
+#ifdef USE_UNWIND
+  /* The unwinder aborted (a symbolizer assertion): back out with what we have. */
+  t = coffeecatch_get();
+  if (t != NULL && t->unwind_guarded) {
+    siglongjmp(t->unwind_ctx, 1);
+  }
+#endif
 
   coffeecatch_start_alarm();
 
