@@ -188,6 +188,44 @@ static NOINLINE int test_cancel_alarm(void) {
   return 0;
 }
 
+/* A pre-existing SIG_IGN must not be called back: SIG_IGN is the constant 1,
+ * not a function. */
+static NOINLINE int test_old_handler_ignore(void) {
+  volatile int caught = 0;
+  CHECK(signal(SIGSEGV, SIG_IGN) != SIG_ERR);
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  CHECK(caught);
+  return 0;
+}
+
+static volatile sig_atomic_t old_handler_ran;
+
+static void plain_old_handler(int code) {
+  (void) code;
+  old_handler_ran = 1;
+}
+
+/* A pre-existing handler installed without SA_SIGINFO still gets called. */
+static NOINLINE int test_old_handler_plain(void) {
+  volatile int caught = 0;
+  old_handler_ran = 0;
+  CHECK(signal(SIGSEGV, plain_old_handler) != SIG_ERR);
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  CHECK(caught);
+  CHECK(old_handler_ran);
+  return 0;
+}
+
 static NOINLINE void *thread_body(void *arg) {
   volatile int *const caught = (volatile int *) arg;
   COFFEE_TRY() {
@@ -238,6 +276,8 @@ static const struct test tests[] = {
   { "reentry after catch",          test_reentry,     NULL },
   { "nested throws to outermost",   test_nested,      NULL },
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
+  { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
+  { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
   /* Reliably kills the process with 2+ threads: the handler resets the signal
    * disposition to SIG_DFL, which is process-wide, so one thread's catch
    * disarms the others. Enable once the core handler is fixed. */
