@@ -278,11 +278,7 @@ static const struct test tests[] = {
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
   { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
-  /* Reliably kills the process with 2+ threads: the handler resets the signal
-   * disposition to SIG_DFL, which is process-wide, so one thread's catch
-   * disarms the others. Enable once the core handler is fixed. */
-  { "concurrent catches (threads)", test_threads,
-    "concurrent catch resets signal disposition process-wide" },
+  { "concurrent catches (threads)", test_threads, NULL },
 };
 
 static int run_forked(const struct test *t) {
