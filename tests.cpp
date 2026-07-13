@@ -308,6 +308,65 @@ static NOINLINE int test_no_context_dies(void) {
   return 0;
 }
 
+#ifdef __cplusplus
+
+static NOINLINE int test_cxx_segv(void) {
+  volatile int caught = 0, sig = 0;
+  COFFEE_CXX_TRY() {
+    CRASH();
+  } COFFEE_CXX_CATCH() {
+    caught = 1;
+    sig = coffeecatch_get_signal();
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_CXX_END();
+  CHECK(!coffeecatch_inside());
+  CHECK(caught);
+  CHECK(sig == SIGSEGV);
+  return 0;
+}
+
+static NOINLINE int test_cxx_throw_inside_try(void) {
+  volatile int coffee_caught = 0, reached = 0, cxx_caught = 0;
+  try {
+    COFFEE_CXX_TRY() {
+      reached = 1;
+      throw 1;
+    } COFFEE_CXX_CATCH() {
+      coffee_caught = 1;
+    } COFFEE_CXX_END();
+  } catch (int c) {
+    cxx_caught = c;
+  }
+  CHECK(!coffeecatch_inside());
+  CHECK(reached);
+  CHECK(!coffee_caught);
+  CHECK(cxx_caught);
+  return 0;
+}
+
+static NOINLINE int test_cxx_throw_inside_catch(void) {
+  volatile int coffee_caught = 0, cxx_caught = 0;
+  try {
+    COFFEE_CXX_TRY() {
+      coffeecatch_abort("deliberate", __FILE__, __LINE__);
+    } COFFEE_CXX_CATCH() {
+      coffee_caught = 1;
+      int sig = coffeecatch_get_signal();
+      coffeecatch_cancel_pending_alarm();
+      throw sig;
+    } COFFEE_CXX_END();
+  } catch (int c) {
+    cxx_caught = c;
+  }
+  CHECK(!coffeecatch_inside());
+  CHECK(coffee_caught);
+  CHECK(cxx_caught == SIGABRT);
+  return 0;
+}
+
+
+#endif // __cplusplus
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -330,6 +389,11 @@ static const struct test tests[] = {
   { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
   { "concurrent catches (threads)", test_threads, NULL },
   { "no context: crash still kills", test_no_context_dies, NULL },
+#ifdef __cplusplus
+  { "C++: segv (null deref)",       test_cxx_segv,    NULL },
+  { "C++: throw inside try",        test_cxx_throw_inside_try, NULL },
+  { "C++: throw inside catch",      test_cxx_throw_inside_catch, NULL },
+#endif // __cplusplus
 };
 
 static int run_forked(const struct test *t) {

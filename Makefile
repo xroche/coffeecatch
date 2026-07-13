@@ -52,6 +52,9 @@ all: $(STATICLIB) $(SHLIB) $(BINS)
 %.o: %.c coffeecatch.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+%.o: %.cpp coffeecatch.h
+	$(CXX) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
 $(STATICLIB): $(LIBOBJ)
 	$(AR) rcs $@ $^
 
@@ -61,7 +64,7 @@ $(SHLIB): $(LIBOBJ)
 # tests/sample link the static archive: no LD_LIBRARY_PATH, identical run on
 # Linux and macOS.
 tests: tests.o $(STATICLIB)
-	$(CC) $(CFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
+	$(CXX) $(CFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
 sample: sample.o $(STATICLIB)
 	$(CC) $(CFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
 
