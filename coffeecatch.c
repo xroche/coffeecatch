@@ -403,10 +403,15 @@ static void coffeecatch_call_old_signal_handler(const int code, siginfo_t *const
                                                        void * const sc) {
   /* Call the "real" Java handler for JIT and internals. */
   if (code >= 0 && code < SIG_NUMBER_MAX) {
-    if (native_code_g.sa_old[code].sa_sigaction != NULL) {
-      native_code_g.sa_old[code].sa_sigaction(code, si, sc);
-    } else if (native_code_g.sa_old[code].sa_handler != NULL) {
-      native_code_g.sa_old[code].sa_handler(code);
+    const struct sigaction *const sa = &native_code_g.sa_old[code];
+    /* sa_handler and sa_sigaction alias the same union, so SA_SIGINFO decides
+     * which one is live. Neither SIG_DFL (0) nor SIG_IGN (1) is callable. */
+    if ((sa->sa_flags & SA_SIGINFO) != 0) {
+      if (sa->sa_sigaction != NULL) {
+        sa->sa_sigaction(code, si, sc);
+      }
+    } else if (sa->sa_handler != SIG_DFL && sa->sa_handler != SIG_IGN) {
+      sa->sa_handler(code);
     }
   }
 }
