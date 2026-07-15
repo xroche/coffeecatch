@@ -132,9 +132,31 @@ void my_function() {
 }
 ```
 
-These unify *cleanup*, not *catching*: `COFFEE_CXX_CATCH()` catches only signals (never a C++ `throw`), and a C++ `catch` catches only C++ exceptions (never a signal). The two mechanisms stay separate.
+These unify *cleanup*, not *catching*: `COFFEE_CXX_CATCH()` catches only signals (never a C++ `throw`), and a C++ `catch` catches only C++ exceptions (never a signal). The two mechanisms stay separate, and can be nested. A signal in the protected block goes to `COFFEE_CXX_CATCH()`; a C++ `throw` skips it entirely and unwinds (running the sentinel's cleanup on the way) to the enclosing C++ `catch`:
+
+```cpp
+try {
+  COFFEE_CXX_TRY() {
+    if (use_native) {
+      call_some_native_function();  // a SIGSEGV here -> COFFEE_CXX_CATCH below
+    } else {
+      throw std::runtime_error("bad input");  // -> C++ catch below, NOT COFFEE_CXX_CATCH
+    }
+  } COFFEE_CXX_CATCH() {
+    // Reached only for a signal. The C++ throw never lands here.
+    coffeecatch_cancel_pending_alarm();
+    throw std::runtime_error(coffeecatch_get_message());  // re-raise as a C++ exception if desired
+  } COFFEE_CXX_END();
+} catch (const std::exception& e) {
+  // Reached for the C++ throw above, or for one re-raised from COFFEE_CXX_CATCH().
+  fprintf(stderr, "**C++ EXCEPTION: %s\n", e.what());
+}
+```
+
+If you re-raise a C++ exception from inside `COFFEE_CXX_CATCH()` (as above), you *may* want to cancel the pending alarm first — otherwise the process is still killed after the grace period, even though the exception was handled. Consider wisely though, your C++ objects may be left in an inconsistent state after handling a signal; see below.
 
 Recovery from a signal is performed with `siglongjmp()`, which does **not** unwind the C++ frames between `COFFEE_CXX_TRY()` and the faulting instruction — destructors of objects in those frames are skipped, so locks stay held and resources leak. (The C++ standard even makes this undefined behavior when such a destructor is non-trivial; it works in practice only because `siglongjmp()` just restores the saved register/stack context and leaks the skipped objects rather than crashing.) Treat the catch block as last rites: log, then exit. Do not use it to recover and continue.
+Note that this behavior is not unique to the `COFFEE_CXX_*` macros; the same would happen with the standard C versions when used in C++.
 
 * Hints
 
