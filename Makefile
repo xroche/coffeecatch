@@ -16,7 +16,7 @@ RM      ?= rm -f
 # it survives a command-line CFLAGS=... — e.g. CI injecting sanitizer flags.
 CFLAGS  ?= -O3 -g
 
-override CPPFLAGS += -D_REENTRANT -D_GNU_SOURCE
+override CPPFLAGS += -D_REENTRANT
 override CFLAGS   += -fPIC -pthread \
                     -W -Wall -Wextra -Werror -Wno-unused-function
 

@@ -226,7 +226,9 @@ static NOINLINE int test_old_handler_plain(void) {
   return 0;
 }
 
-static pthread_barrier_t crash_barrier;
+static pthread_mutex_t crash_mutex;
+static pthread_cond_t crash_cond;
+static sig_atomic_t thread_count;
 
 static NOINLINE void *thread_body(void *arg) {
   volatile int *const caught = (volatile int *) arg;
@@ -234,7 +236,13 @@ static NOINLINE void *thread_body(void *arg) {
     /* Crash only once every thread holds a catch context: a serialized run
      * would let the handlers be reinstalled between threads, hiding a
      * process-wide disarm. */
-    pthread_barrier_wait(&crash_barrier);
+    pthread_mutex_lock(&crash_mutex);
+    if (--thread_count <= 0) {
+      pthread_cond_broadcast(&crash_cond);
+    } else {
+      pthread_cond_wait(&crash_cond, &crash_mutex);
+    }
+    pthread_mutex_unlock(&crash_mutex);
     CRASH();
   } COFFEE_CATCH() {
     *caught = coffeecatch_get_signal() == SIGSEGV ? 1 : -1;
@@ -248,19 +256,19 @@ static NOINLINE void *thread_body(void *arg) {
 static NOINLINE int test_threads(void) {
   enum { N = 8 };
   pthread_t th[N];
-  volatile int caught[N];
+  volatile int caught[N] = { 0 };
   int i;
-  for (i = 0; i < N; i++) {
-    caught[i] = 0;
-  }
-  CHECK(pthread_barrier_init(&crash_barrier, NULL, N) == 0);
+  CHECK(pthread_mutex_init(&crash_mutex, NULL) == 0);
+  CHECK(pthread_cond_init(&crash_cond, NULL) == 0);
+  thread_count = N;
   for (i = 0; i < N; i++) {
     CHECK(pthread_create(&th[i], NULL, thread_body, (void *) &caught[i]) == 0);
   }
   for (i = 0; i < N; i++) {
     CHECK(pthread_join(th[i], NULL) == 0);
   }
-  CHECK(pthread_barrier_destroy(&crash_barrier) == 0);
+  CHECK(pthread_mutex_destroy(&crash_mutex) == 0);
+  CHECK(pthread_cond_destroy(&crash_cond) == 0);
   for (i = 0; i < N; i++) {
     CHECK(caught[i] == 1);
   }

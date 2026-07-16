@@ -576,6 +576,17 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
 /* Return the thread-specific native_code_handler_struct structure, or
  * @c null if no such structure is available. */
 static native_code_handler_struct* coffeecatch_get() {
+  /* pthread_getspecific() may only be called on a created key. A non-zero
+   * initialized count means coffeecatch_handler_setup_global() has already run
+   * pthread_key_create(); until then the key is zero, and on macOS a zero key
+   * aliases a reserved TSD slot (the pthread self-pointer), so
+   * pthread_getspecific() would return a non-NULL garbage pointer instead of
+   * the NULL glibc yields for an unallocated key. Reading through that pointer
+   * made coffeecatch_inside() believe a context was already armed, so
+   * COFFEE_TRY() ran its body with no handler installed. */
+  if (native_code_g.initialized == 0) {
+    return NULL;
+  }
   return (native_code_handler_struct*)
       pthread_getspecific(native_code_thread);
 }
@@ -684,7 +695,7 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
 
 /* Internal globals initialization. */
 static int coffeecatch_handler_setup_global(void) {
-  if (native_code_g.initialized++ == 0) {
+  if (native_code_g.initialized == 0) {
     size_t i;
     struct sigaction sa_abort;
     struct sigaction sa_pass;
@@ -726,6 +737,12 @@ static int coffeecatch_handler_setup_global(void) {
 
     DEBUG(print("installed global signal handlers\n"));
   }
+
+  /* Bump the refcount only after the key exists: coffeecatch_get() reads this
+   * count without the mutex (from the top of COFFEE_TRY() on another thread)
+   * and treats a non-zero value as "key created". Incrementing before
+   * pthread_key_create() would expose that window. */
+  native_code_g.initialized++;
 
   /* OK. */
   return 0;
