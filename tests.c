@@ -226,6 +226,7 @@ static NOINLINE int test_old_handler_plain(void) {
   return 0;
 }
 
+/* macOS doesn't have pthread_barrier_t; use pthread_cond_t to mimic it. */
 static pthread_mutex_t crash_mutex;
 static pthread_cond_t crash_cond;
 static sig_atomic_t thread_count;
