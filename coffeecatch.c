@@ -1385,9 +1385,17 @@ void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
 }
 
 /**
- * Returns 1 if we are already inside a coffeecatch block, 0 otherwise.
+ * Returns nonzero if we are already inside a coffeecatch block, 0 otherwise.
  */
 int coffeecatch_inside() {
+  return !!coffeecatch_get();
+}
+
+/**
+ * Increments the entry count of a nested coffeecatch block, if we're in one.
+ * Returns 1 if we are already inside a coffeecatch block, 0 otherwise.
+ */
+int coffeecatch_reenter() {
   native_code_handler_struct *const t = coffeecatch_get();
   if (t != NULL && t->reenter > 0) {
     t->reenter++;

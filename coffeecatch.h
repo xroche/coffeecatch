@@ -209,11 +209,12 @@ extern int coffeecatch_cancel_pending_alarm(void);
 /** Internal functions & definitions, not to be used directly. **/
 #include <setjmp.h>
 extern int coffeecatch_inside(void);
+extern int coffeecatch_reenter(void);
 extern int coffeecatch_setup(void);
 extern sigjmp_buf* coffeecatch_get_ctx(void);
 extern void coffeecatch_cleanup(void);
 #define COFFEE_TRY()                                \
-  if (coffeecatch_inside() || \
+  if (coffeecatch_reenter() || \
       (coffeecatch_setup() == 0 \
        && sigsetjmp(*coffeecatch_get_ctx(), 1) == 0))
 #define COFFEE_CATCH() else
