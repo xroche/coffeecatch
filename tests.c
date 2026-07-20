@@ -241,9 +241,7 @@ static NOINLINE void *thread_body(void *arg) {
     if (--thread_count <= 0) {
       pthread_cond_broadcast(&crash_cond);
     } else {
-      /* Predicate loop: a spurious wakeup must not let a thread escape the
-       * rendezvous early, which would silently shrink it below N and weaken
-       * the concurrency check. */
+      /* Don't continue on spurious wakeups. */
       while (thread_count > 0) {
         pthread_cond_wait(&crash_cond, &crash_mutex);
       }

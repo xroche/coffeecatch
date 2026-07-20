@@ -31,11 +31,8 @@
 #define USE_LIBUNWIND
 #endif
 
-/* Note: __APPLE__ deliberately does NOT enable USE_UNWIND. _Unwind_Backtrace()
- * runs inside the signal handler, and on Darwin it calls
- * _dyld_find_unwind_sections() per frame, taking the dyld loader lock; a crash
- * while that lock is held would self-deadlock. Darwin backtraces, if wanted,
- * belong in a separate change. */
+/* __APPLE__ deliberately does not enable USE_UNWIND: _Unwind_Backtrace() in the
+ * handler takes the dyld loader lock per frame on Darwin and can self-deadlock. */
 
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
@@ -238,9 +235,6 @@ typedef struct native_code_handler_struct {
   int code;
   siginfo_t si;
   ucontext_t uc;
-  /* Faulting program counter, captured inside the handler. On Darwin
-   * uc.uc_mcontext is a pointer into the kernel signal frame, so it must not be
-   * dereferenced after the handler returns; see coffeecatch_copy_context(). */
   uintptr_t pc;
 
   /* Uwind context. */
@@ -551,8 +545,6 @@ static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
 }
 #endif
 
-/* Defined further down; forward-declared so the PC can be captured in-handler
- * while the (possibly non-owning, on Darwin) context is still valid. */
 static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc);
 
 /* Copy context infos (signal code, etc.) */
@@ -564,10 +556,8 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
   if (sc != NULL) {
     ucontext_t *const uc = (ucontext_t*) sc;
     t->uc = *uc;
-    /* Capture the faulting PC now, while the context is valid. On Darwin
-     * uc_mcontext points into the kernel signal frame, which is gone once we
-     * siglongjmp() out and revert the altstack, so reading it in
-     * coffeecatch_get_message() would dereference a dangling pointer. */
+    /* Capture the PC now: on Darwin uc_mcontext points into the kernel signal
+     * frame, gone once we siglongjmp() out and revert the altstack. */
     t->pc = coffeecatch_get_pc_from_ucontext(uc);
   } else {
     memset(&t->uc, 0, sizeof(t->uc));
@@ -587,14 +577,7 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
 /* Return the thread-specific native_code_handler_struct structure, or
  * @c null if no such structure is available. */
 static native_code_handler_struct* coffeecatch_get() {
-  /* pthread_getspecific() may only be called on a created key. A non-zero
-   * initialized count means coffeecatch_handler_setup_global() has already run
-   * pthread_key_create(); until then the key is zero, and on macOS a zero key
-   * aliases a reserved TSD slot (the pthread self-pointer), so
-   * pthread_getspecific() would return a non-NULL garbage pointer instead of
-   * the NULL glibc yields for an unallocated key. Reading through that pointer
-   * made coffeecatch_inside() believe a context was already armed, so
-   * COFFEE_TRY() ran its body with no handler installed. */
+  /* pthread_getspecific() is only valid once the key exists. */
   if (native_code_g.initialized == 0) {
     return NULL;
   }
@@ -749,10 +732,7 @@ static int coffeecatch_handler_setup_global(void) {
     DEBUG(print("installed global signal handlers\n"));
   }
 
-  /* Bump the refcount only after the key exists: coffeecatch_get() reads this
-   * count without the mutex (from the top of COFFEE_TRY() on another thread)
-   * and treats a non-zero value as "key created". Incrementing before
-   * pthread_key_create() would expose that window. */
+  /* Bump the refcount only after the key exists. */
   native_code_g.initialized++;
 
   /* OK. */
@@ -1344,8 +1324,6 @@ const char* coffeecatch_get_message() {
       buffer_offs += strlen(&buffer[buffer_offs]);
     }
 
-    /* Faulting program counter location (captured in-handler; see
-     * coffeecatch_copy_context()). */
     if (t->pc != 0) {
       const uintptr_t pc = t->pc;
       snprintf(&buffer[buffer_offs], buffer_len - buffer_offs, " ");
@@ -1360,10 +1338,6 @@ const char* coffeecatch_get_message() {
   } else {
     /* Static buffer in case of emergency */
     static char buffer[256];
-    /* The GNU strerror_r (returning char*) is selected by _GNU_SOURCE only on
-     * glibc. Darwin ignores _GNU_SOURCE and ships only the POSIX int-returning
-     * form; Bionic likewise returns int. Gate on __GLIBC__ so those take the
-     * POSIX branch below. */
 #if defined(__GLIBC__) && defined(_GNU_SOURCE)
     return strerror_r(error, &buffer[0], sizeof(buffer));
 #else
