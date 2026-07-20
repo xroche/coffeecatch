@@ -308,121 +308,6 @@ static NOINLINE int test_no_context_dies(void) {
   return 0;
 }
 
-#ifdef __cplusplus
-
-static NOINLINE int test_cxx_segv(void) {
-  volatile int caught = 0, sig = 0;
-  COFFEE_CXX_TRY() {
-    CRASH();
-  } COFFEE_CXX_CATCH() {
-    caught = 1;
-    sig = coffeecatch_get_signal();
-    coffeecatch_cancel_pending_alarm();
-  } COFFEE_CXX_END();
-  CHECK(!coffeecatch_inside());
-  CHECK(caught);
-  CHECK(sig == SIGSEGV);
-  return 0;
-}
-
-static NOINLINE int test_cxx_throw_inside_try(void) {
-  volatile int coffee_caught = 0, reached = 0, cxx_caught = 0;
-  try {
-    COFFEE_CXX_TRY() {
-      reached = 1;
-      throw 1;
-    } COFFEE_CXX_CATCH() {
-      coffee_caught = 1;
-    } COFFEE_CXX_END();
-  } catch (int c) {
-    cxx_caught = c;
-  }
-  CHECK(!coffeecatch_inside());
-  CHECK(reached);
-  CHECK(!coffee_caught);
-  CHECK(cxx_caught);
-  return 0;
-}
-
-static NOINLINE int test_cxx_throw_inside_catch(void) {
-  volatile int coffee_caught = 0, cxx_caught = 0;
-  try {
-    COFFEE_CXX_TRY() {
-      coffeecatch_abort("deliberate", __FILE__, __LINE__);
-    } COFFEE_CXX_CATCH() {
-      coffee_caught = 1;
-      int sig = coffeecatch_get_signal();
-      coffeecatch_cancel_pending_alarm();
-      throw sig;
-    } COFFEE_CXX_END();
-  } catch (int c) {
-    cxx_caught = c;
-  }
-  CHECK(!coffeecatch_inside());
-  CHECK(coffee_caught);
-  CHECK(cxx_caught == SIGABRT);
-  return 0;
-}
-
-static volatile sig_atomic_t probe_dtor_ran;
-
-/* A C++ object with a side-effecting destructor, so we can observe whether the
- * destructor runs when the frame is left. */
-struct DtorProbe {
-  ~DtorProbe() { probe_dtor_ran = 1; }
-};
-
-/* Crash with a live RAII object in this frame. The destructor is sequenced
- * after CRASH(), so a normal return would run it -- but the fault never lets us
- * reach the end of scope. */
-static NOINLINE void crash_below_raii(void) {
-  DtorProbe probe;
-  CRASH();
-  (void) &probe;
-}
-
-/* Documents an inherent limitation, not a bug: recovery is via siglongjmp(),
- * which does NOT unwind C++ frames between the TRY and the fault. Destructors
- * of objects in those frames are skipped -- locks stay held, resources leak.
- * This is why the model is "log and die", not "recover and continue". */
-static NOINLINE int test_cxx_raii_skipped_on_unwind(void) {
-  volatile int caught = 0;
-  probe_dtor_ran = 0;
-  COFFEE_CXX_TRY() {
-    crash_below_raii();
-  } COFFEE_CXX_CATCH() {
-    caught = 1;
-    coffeecatch_cancel_pending_alarm();
-  } COFFEE_CXX_END();
-  CHECK(caught);
-  CHECK(!probe_dtor_ran);   /* siglongjmp() jumped over the destructor */
-  return 0;
-}
-
-/* Return straight out of the protected block. The plain COFFEE_TRY() macro
- * forbids this (cleanup would be skipped); the CXX sentinel makes it safe. */
-static NOINLINE void returns_from_cxx_try(volatile int *const reached) {
-  COFFEE_CXX_TRY() {
-    *reached = 1;
-    return;
-  } COFFEE_CXX_CATCH() {
-    /* not reached: no signal */
-  } COFFEE_CXX_END();
-}
-
-/* After an early return, the sentinel must have run cleanup, leaving the thread
- * with no live catch context. */
-static NOINLINE int test_cxx_return_from_try(void) {
-  volatile int reached = 0;
-  returns_from_cxx_try(&reached);
-  CHECK(reached);
-  CHECK(!coffeecatch_inside());
-  return 0;
-}
-
-
-#endif // __cplusplus
-
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -445,13 +330,6 @@ static const struct test tests[] = {
   { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
   { "concurrent catches (threads)", test_threads, NULL },
   { "no context: crash still kills", test_no_context_dies, NULL },
-#ifdef __cplusplus
-  { "C++: segv (null deref)",       test_cxx_segv,    NULL },
-  { "C++: throw inside try",        test_cxx_throw_inside_try, NULL },
-  { "C++: throw inside catch",      test_cxx_throw_inside_catch, NULL },
-  { "C++: RAII dtor skipped on unwind", test_cxx_raii_skipped_on_unwind, NULL },
-  { "C++: return from try cleans up", test_cxx_return_from_try, NULL },
-#endif // __cplusplus
 };
 
 static int run_forked(const struct test *t) {

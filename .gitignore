@@ -4,5 +4,6 @@
 *.so.*
 *.dylib
 /tests
+/tests_cxx
 /sample
 /coffeecatch.tgz
