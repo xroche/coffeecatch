@@ -31,9 +31,11 @@
 #define USE_LIBUNWIND
 #endif
 
-#ifdef __APPLE__
-#define USE_UNWIND
-#endif
+/* Note: __APPLE__ deliberately does NOT enable USE_UNWIND. _Unwind_Backtrace()
+ * runs inside the signal handler, and on Darwin it calls
+ * _dyld_find_unwind_sections() per frame, taking the dyld loader lock; a crash
+ * while that lock is held would self-deadlock. Darwin backtraces, if wanted,
+ * belong in a separate change. */
 
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
@@ -65,11 +67,6 @@
 #include <pthread.h>
 #include <dlfcn.h>
 #include "coffeecatch.h"
-
-#ifndef SIGPOLL
-// SIGPOLL is SIGIO on some platforms
-#define SIGPOLL SIGIO
-#endif
 
 /*#define NDK_DEBUG 1*/
 #if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 1 ) )
@@ -241,6 +238,10 @@ typedef struct native_code_handler_struct {
   int code;
   siginfo_t si;
   ucontext_t uc;
+  /* Faulting program counter, captured inside the handler. On Darwin
+   * uc.uc_mcontext is a pointer into the kernel signal frame, so it must not be
+   * dereferenced after the handler returns; see coffeecatch_copy_context(). */
+  uintptr_t pc;
 
   /* Uwind context. */
 #if (defined(USE_CORKSCREW))
@@ -550,6 +551,10 @@ static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
 }
 #endif
 
+/* Defined further down; forward-declared so the PC can be captured in-handler
+ * while the (possibly non-owning, on Darwin) context is still valid. */
+static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc);
+
 /* Copy context infos (signal code, etc.) */
 static void coffeecatch_copy_context(native_code_handler_struct *const t,
                                      const int code, siginfo_t *const si,
@@ -559,8 +564,14 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
   if (sc != NULL) {
     ucontext_t *const uc = (ucontext_t*) sc;
     t->uc = *uc;
+    /* Capture the faulting PC now, while the context is valid. On Darwin
+     * uc_mcontext points into the kernel signal frame, which is gone once we
+     * siglongjmp() out and revert the altstack, so reading it in
+     * coffeecatch_get_message() would dereference a dangling pointer. */
+    t->pc = coffeecatch_get_pc_from_ucontext(uc);
   } else {
     memset(&t->uc, 0, sizeof(t->uc));
+    t->pc = 0;
   }
 
 #ifdef USE_UNWIND
@@ -1043,6 +1054,7 @@ static const char* coffeecatch_desc_sig(int sig, int code) {
       return "Child";
     }
     break;
+#ifdef SIGPOLL
   case SIGPOLL:
     switch(code) {
     case POLL_IN:
@@ -1061,6 +1073,7 @@ static const char* coffeecatch_desc_sig(int sig, int code) {
       return "Pool";
     }
     break;
+#endif
   case SIGABRT:
     return "Process abort signal";
   case SIGALRM:
@@ -1331,9 +1344,10 @@ const char* coffeecatch_get_message() {
       buffer_offs += strlen(&buffer[buffer_offs]);
     }
 
-    /* Faulting program counter location. */
-    if (coffeecatch_get_pc_from_ucontext(&t->uc) != 0) {
-      const uintptr_t pc = coffeecatch_get_pc_from_ucontext(&t->uc);
+    /* Faulting program counter location (captured in-handler; see
+     * coffeecatch_copy_context()). */
+    if (t->pc != 0) {
+      const uintptr_t pc = t->pc;
       snprintf(&buffer[buffer_offs], buffer_len - buffer_offs, " ");
       buffer_offs += strlen(&buffer[buffer_offs]);
       format_pc_address(&buffer[buffer_offs], buffer_len - buffer_offs, pc);
@@ -1346,7 +1360,11 @@ const char* coffeecatch_get_message() {
   } else {
     /* Static buffer in case of emergency */
     static char buffer[256];
-#ifdef _GNU_SOURCE
+    /* The GNU strerror_r (returning char*) is selected by _GNU_SOURCE only on
+     * glibc. Darwin ignores _GNU_SOURCE and ships only the POSIX int-returning
+     * form; Bionic likewise returns int. Gate on __GLIBC__ so those take the
+     * POSIX branch below. */
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
     return strerror_r(error, &buffer[0], sizeof(buffer));
 #else
     const int code = strerror_r(error, &buffer[0], sizeof(buffer));

@@ -229,7 +229,7 @@ static NOINLINE int test_old_handler_plain(void) {
 /* macOS doesn't have pthread_barrier_t; use pthread_cond_t to mimic it. */
 static pthread_mutex_t crash_mutex;
 static pthread_cond_t crash_cond;
-static sig_atomic_t thread_count;
+static int thread_count;   /* only touched under crash_mutex */
 
 static NOINLINE void *thread_body(void *arg) {
   volatile int *const caught = (volatile int *) arg;
@@ -241,7 +241,12 @@ static NOINLINE void *thread_body(void *arg) {
     if (--thread_count <= 0) {
       pthread_cond_broadcast(&crash_cond);
     } else {
-      pthread_cond_wait(&crash_cond, &crash_mutex);
+      /* Predicate loop: a spurious wakeup must not let a thread escape the
+       * rendezvous early, which would silently shrink it below N and weaken
+       * the concurrency check. */
+      while (thread_count > 0) {
+        pthread_cond_wait(&crash_cond, &crash_mutex);
+      }
     }
     pthread_mutex_unlock(&crash_mutex);
     CRASH();
