@@ -40,12 +40,6 @@
 static volatile uintptr_t bad_addr = 0x100;
 #define CRASH() (*(volatile int *) bad_addr = 1)
 
-/* The sentinel-ran check below is CHECK(!coffeecatch_inside()). That is safe
- * despite coffeecatch_inside() not being idempotent: its t->reenter++ is guarded
- * by reenter>0, so on the passing path (cleanup ran, reenter==0) it returns 0
- * without mutating; the increment only fires when a leak is present, i.e. when
- * the case is already failing out. */
-
 /* --- individual cases: return 0 on success, 1 on failure ----------------- */
 
 static NOINLINE int test_cxx_segv(void) {
@@ -57,7 +51,7 @@ static NOINLINE int test_cxx_segv(void) {
     sig = coffeecatch_get_signal();
     coffeecatch_cancel_pending_alarm();
   } COFFEE_CXX_END();
-  CHECK(!coffeecatch_inside());   /* the sentinel ran the cleanup (see note above) */
+  CHECK(!coffeecatch_inside());   /* the sentinel ran the cleanup */
   CHECK(caught);
   CHECK(sig == SIGSEGV);
   return 0;
