@@ -110,11 +110,11 @@ static NOINLINE int test_cxx_throw_inside_catch(void) {
     } COFFEE_CXX_CATCH() {
       coffee_caught = 1;
       int sig = coffeecatch_get_signal();
-      coffeecatch_cancel_pending_alarm();
       throw sig;
     } COFFEE_CXX_END();
   } catch (int c) {
     cxx_caught = c;
+    coffeecatch_cancel_pending_alarm();
   }
   CHECK(!coffeecatch_inside());
   CHECK(coffee_caught);
