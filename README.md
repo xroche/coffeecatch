@@ -144,16 +144,18 @@ try {
     }
   } COFFEE_CXX_CATCH() {
     // Reached only for a signal. The C++ throw never lands here.
-    coffeecatch_cancel_pending_alarm();
     throw std::runtime_error(coffeecatch_get_message());  // re-raise as a C++ exception if desired
   } COFFEE_CXX_END();
 } catch (const std::exception& e) {
   // Reached for the C++ throw above, or for one re-raised from COFFEE_CXX_CATCH().
+  coffeecatch_cancel_pending_alarm();  // safe here: reaching this catch proves the allocator worked
   fprintf(stderr, "**C++ EXCEPTION: %s\n", e.what());
 }
 ```
 
-If you re-raise a C++ exception from inside `COFFEE_CXX_CATCH()` (as above), you *may* want to cancel the pending alarm first — otherwise the process is still killed after the grace period, even though the exception was handled. Consider wisely though, your C++ objects may be left in an inconsistent state after handling a signal; see below.
+If you re-raise a C++ exception from `COFFEE_CXX_CATCH()`, cancel the pending alarm in the **outer** `catch`, *not* before the `throw`. `throw` allocates — via `__cxa_allocate_exception` plus the message copy — and the crash may have happened inside `malloc()` with the allocator lock held. The armed alarm is exactly the watchdog for that case: it kills the process at the grace period instead of letting the `throw` hang forever. Cancelling first would disarm it immediately before the riskiest call in the block. Reaching the outer `catch` proves the allocator was usable, so cancelling there is safe.
+
+This is not limited to the `throw` path: cleanup itself calls `free()` twice, so even a non-throwing `COFFEE_CXX_END()` can hang on a locked allocator. Leaving the alarm armed until you are demonstrably clear of the allocator is the safe default. Bear in mind too that your C++ objects may be left in an inconsistent state after a signal; see below.
 
 Recovery from a signal is performed with `siglongjmp()`, which does **not** unwind the C++ frames between `COFFEE_CXX_TRY()` and the faulting instruction — destructors of objects in those frames are skipped, so locks stay held and resources leak. (The C++ standard even makes this undefined behavior when such a destructor is non-trivial; it works in practice only because `siglongjmp()` just restores the saved register/stack context and leaks the skipped objects rather than crashing.) Treat the catch block as last rites: log, then exit. Do not use it to recover and continue.
 Note that this behavior is not unique to the `COFFEE_CXX_*` macros; the same would happen with the standard C versions when used in C++.
