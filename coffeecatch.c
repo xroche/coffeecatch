@@ -442,6 +442,9 @@ static void coffeecatch_try_jump_userland(native_code_handler_struct*
 
     /* Invalidate the context */
     t->ctx_is_set = 0;
+    /* Collapse nesting to this outermost block; inner COFFEE_END()s are jumped
+     * over, so only this level's cleanup runs to balance the depth. */
+    t->reenter = 1;
 #ifdef USE_UNWIND
     /* Jumping out of the unwinder abandons its frame: disarm the guard, or a
      * later crash would siglongjmp() into a dead one. */

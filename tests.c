@@ -172,6 +172,7 @@ static NOINLINE int test_nested(void) {
   CHECK(outer_caught);
   CHECK(!inner_caught);
   CHECK(!outer_after);
+  CHECK(!coffeecatch_inside());   /* nesting depth balanced back to zero */
   return 0;
 }
 
