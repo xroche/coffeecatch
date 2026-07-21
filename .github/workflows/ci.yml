@@ -99,9 +99,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-14 is Apple Silicon; macos-15-intel is the Intel image.
-          - { arch: arm64,  runner: macos-14 }
-          - { arch: x86-64, runner: macos-15-intel }
+          # macos defaults to Apple Silicon; macos-26-intel will be the last Intel image.
+          - { arch: arm64,  runner: macos-latest }
+          - { arch: x86-64, runner: macos-26-intel }
     steps:
       - uses: actions/checkout@v6
 
