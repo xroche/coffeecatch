@@ -116,7 +116,51 @@ void my_function() {
 }
 ```
 
+* In C++ code
+
+The `COFFEE_CXX_TRY()`/`COFFEE_CXX_CATCH()`/`COFFEE_CXX_END()` macros are C++-friendly variants. A sentinel object runs the cleanup from its destructor, so cleanup happens even if the protected block exits by a `return` or a propagating C++ exception (both of which are forbidden with the plain `COFFEE_TRY()` macros):
+
+```cpp
+void my_function() {
+  COFFEE_CXX_TRY() {
+    call_some_native_function();
+    return;                     // safe: the sentinel still cleans up
+  } COFFEE_CXX_CATCH() {
+    const char*const message = coffeecatch_get_message();
+    fprintf(stderr, "**FATAL ERROR: %s\n", message);
+  } COFFEE_CXX_END();
+}
+```
+
+These unify *cleanup*, not *catching*: `COFFEE_CXX_CATCH()` catches only signals (never a C++ `throw`), and a C++ `catch` catches only C++ exceptions (never a signal). The two mechanisms stay separate, and can be nested. A signal in the protected block goes to `COFFEE_CXX_CATCH()`; a C++ `throw` skips it entirely and unwinds (running the sentinel's cleanup on the way) to the enclosing C++ `catch`:
+
+```cpp
+try {
+  COFFEE_CXX_TRY() {
+    if (use_native) {
+      call_some_native_function();  // a SIGSEGV here -> COFFEE_CXX_CATCH below
+    } else {
+      throw std::runtime_error("bad input");  // -> C++ catch below, NOT COFFEE_CXX_CATCH
+    }
+  } COFFEE_CXX_CATCH() {
+    // Reached only for a signal. The C++ throw never lands here.
+    throw std::runtime_error(coffeecatch_get_message());  // re-raise as a C++ exception if desired
+  } COFFEE_CXX_END();
+} catch (const std::exception& e) {
+  // Reached for the C++ throw above, or for one re-raised from COFFEE_CXX_CATCH().
+  coffeecatch_cancel_pending_alarm();  // safe here: reaching this catch proves the allocator worked
+  fprintf(stderr, "**C++ EXCEPTION: %s\n", e.what());
+}
+```
+
+If you re-raise a C++ exception from `COFFEE_CXX_CATCH()`, cancel the pending alarm in the **outer** `catch`, *not* before the `throw`. `throw` allocates — via `__cxa_allocate_exception` plus the message copy — and the crash may have happened inside `malloc()` with the allocator lock held. The armed alarm is exactly the watchdog for that case: it kills the process at the grace period instead of letting the `throw` hang forever. Cancelling first would disarm it immediately before the riskiest call in the block. Reaching the outer `catch` proves the allocator was usable, so cancelling there is safe.
+
+This is not limited to the `throw` path: cleanup itself calls `free()` twice, so even a non-throwing `COFFEE_CXX_END()` can hang on a locked allocator. Leaving the alarm armed until you are demonstrably clear of the allocator is the safe default. Bear in mind too that your C++ objects may be left in an inconsistent state after a signal; see below.
+
+Recovery from a signal is performed with `siglongjmp()`, which does **not** unwind the C++ frames between `COFFEE_CXX_TRY()` and the faulting instruction — destructors of objects in those frames are skipped, so locks stay held and resources leak. (The C++ standard even makes this undefined behavior when such a destructor is non-trivial; it works in practice only because `siglongjmp()` just restores the saved register/stack context and leaks the skipped objects rather than crashing.) Treat the catch block as last rites: log, then exit. Do not use it to recover and continue.
+Note that this behavior is not unique to the `COFFEE_CXX_*` macros; the same would happen with the standard C versions when used in C++.
+
 * Hints
 
-If you wish to catch signals and continue running your program rather than ending it (this may be dangerous, especially if a crash was spotted within a C library function, such as `malloc()`), use the `coffeecatch_cancel_pending_alarm()` function to cancel the default pending alarm triggered to avoid deadlocks.
+If you wish to catch signals and continue running your program rather than ending it (this may be dangerous, especially if a crash was spotted within a C library function, such as `malloc()`, or within C++ code and destructors were skipped), use the `coffeecatch_cancel_pending_alarm()` function to cancel the default pending alarm triggered to avoid deadlocks.
 

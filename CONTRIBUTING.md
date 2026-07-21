@@ -81,11 +81,15 @@ removal.
 
 ## Tests
 
-`tests.c` is the suite behind `make check`. Each case runs in its own forked
-child, because coffeecatch installs process-global handlers and per-thread
-state, and isolation keeps one case's crash from corrupting the runner.
-Register new cases in the `tests[]` table and confirm they actually ran: a
-silently skipped test is worse than no test.
+`tests.c` (C, linked with `$(CC)`) and `tests_cxx.cpp` (the `COFFEE_CXX_*`
+macros, linked with `$(CXX)`) are the two suites behind `make check`. Keep the
+C cases in `tests.c`: they `siglongjmp` across their own frames, which is well
+defined in C but UB across the C++ frames a `.cpp` file would introduce. Each
+case runs in its own forked child, because coffeecatch installs process-global
+handlers and per-thread state, and isolation keeps one case's crash from
+corrupting the runner. Register new cases in the `tests[]` table of the matching
+suite and confirm they actually ran: a silently skipped test is worse than no
+test.
 
 Any behaviour change needs a test that would catch the regression. When you
 write one, ask what buggy implementation would still pass it. If you can name

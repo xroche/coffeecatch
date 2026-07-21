@@ -5,19 +5,26 @@
 ###############################################################################
 
 # --- Toolchain (overridable) -------------------------------------------------
-# cc/ar are the POSIX defaults; CI overrides CC with clang or "gcc -m32".
+# cc/c++/ar are the POSIX defaults; CI overrides CC/CXX with a matching pair
+# (gcc/g++ or clang/clang++). The C suite must stay on CC so clang coverage is
+# not silently swapped for the default g++.
 CC      ?= cc
+CXX     ?= c++
 AR      ?= ar
 RM      ?= rm -f
 
 # --- Flags -------------------------------------------------------------------
-# CFLAGS holds the user-overridable optimization/debug flags. Everything
-# mandatory (PIC, reentrancy, strict warnings) is appended with `override` so
-# it survives a command-line CFLAGS=... — e.g. CI injecting sanitizer flags.
-CFLAGS  ?= -O3 -g
+# CFLAGS/CXXFLAGS hold the user-overridable optimization/debug flags. Everything
+# mandatory (PIC, reentrancy, strict warnings) is appended with `override` so it
+# survives a command-line CFLAGS=... — e.g. CI injecting sanitizer flags. The
+# two are kept apart so `make CFLAGS=-std=gnu99` does not reach the C++ compiler.
+CFLAGS   ?= -O3 -g
+CXXFLAGS ?= -O3 -g
 
 override CPPFLAGS += -D_REENTRANT -D_GNU_SOURCE
 override CFLAGS   += -fPIC -pthread \
+                    -W -Wall -Wextra -Werror -Wno-unused-function
+override CXXFLAGS += -fPIC -pthread \
                     -W -Wall -Wextra -Werror -Wno-unused-function
 
 # --- Platform shared-library wiring ------------------------------------------
@@ -41,7 +48,7 @@ STATICLIB := libcoffeecatch.a
 # and is meant to be compiled into the embedder, not this standalone build.
 LIBSRC := coffeecatch.c
 LIBOBJ := $(LIBSRC:.c=.o)
-BINS   := tests sample
+BINS   := tests tests_cxx sample
 
 # --- Targets -----------------------------------------------------------------
 .PHONY: all check test clean dist
@@ -52,6 +59,9 @@ all: $(STATICLIB) $(SHLIB) $(BINS)
 %.o: %.c coffeecatch.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+%.o: %.cpp coffeecatch.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
 $(STATICLIB): $(LIBOBJ)
 	$(AR) rcs $@ $^
 
@@ -59,19 +69,22 @@ $(SHLIB): $(LIBOBJ)
 	$(CC) $(CFLAGS) $(SOFLAGS) $(LIBOBJ) -o $@ $(LDFLAGS) $(SOLIBS) $(LDLIBS)
 
 # tests/sample link the static archive: no LD_LIBRARY_PATH, identical run on
-# Linux and macOS.
+# Linux and macOS. The C suite links with $(CC), the C++ suite with $(CXX).
 tests: tests.o $(STATICLIB)
 	$(CC) $(CFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
+tests_cxx: tests_cxx.o $(STATICLIB)
+	$(CXX) $(CXXFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
 sample: sample.o $(STATICLIB)
 	$(CC) $(CFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
 
-check test: tests
+check test: tests tests_cxx
 	./tests
+	./tests_cxx
 
 dist:
 	$(RM) coffeecatch.tgz
 	tar cvfz coffeecatch.tgz $(LIBSRC) coffeecatch.h coffeejni.c coffeejni.h \
-		sample.c tests.c Makefile LICENSE README.md
+		sample.c tests.c tests_cxx.cpp Makefile LICENSE README.md
 
 clean:
 	$(RM) *.o $(STATICLIB) $(SHLIB) libcoffeecatch.so.* $(BINS) coffeecatch.tgz

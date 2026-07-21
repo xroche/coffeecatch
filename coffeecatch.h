@@ -209,11 +209,12 @@ extern int coffeecatch_cancel_pending_alarm(void);
 /** Internal functions & definitions, not to be used directly. **/
 #include <setjmp.h>
 extern int coffeecatch_inside(void);
+extern int coffeecatch_reenter(void);
 extern int coffeecatch_setup(void);
 extern sigjmp_buf* coffeecatch_get_ctx(void);
 extern void coffeecatch_cleanup(void);
 #define COFFEE_TRY()                                \
-  if (coffeecatch_inside() || \
+  if (coffeecatch_reenter() || \
       (coffeecatch_setup() == 0 \
        && sigsetjmp(*coffeecatch_get_ctx(), 1) == 0))
 #define COFFEE_CATCH() else
@@ -221,6 +222,39 @@ extern void coffeecatch_cleanup(void);
 /** End of internal functions & definitions. **/
 
 #ifdef __cplusplus
+/**
+ * Sentinel class for cleaning up. Not to be used directly.
+ */
+namespace CoffeeCatch {
+class Sentinel {
+public:
+  Sentinel() {}
+  ~Sentinel() { COFFEE_END(); }
+};
+}
+
+/**
+ * C++-friendly variants of the macros above. A sentinel object runs the
+ * cleanup from its destructor, so COFFEE_END() still fires if the protected
+ * block exits by "return" or a propagating C++ exception -- both forbidden with
+ * the plain macros. They unify cleanup only: COFFEE_CXX_CATCH() catches signals,
+ * a C++ "catch" catches C++ exceptions, and the two stay separate.
+ *
+ * Caveat: signal recovery uses siglongjmp(), which does not unwind the C++
+ * frames between COFFEE_CXX_TRY() and the fault, so their destructors are
+ * skipped (undefined behavior if non-trivial; see [support.runtime]). The
+ * armed alarm() is still pending. Treat the catch block as last rites: log,
+ * then exit. See README.md for the full rationale.
+ */
+/* __LINE__-paste the sentinel name so nested blocks do not shadow each other
+ * (an embedder building with -Wshadow would otherwise reject the nesting). */
+#define COFFEE_CXX_PASTE_(a, b) a ## b
+#define COFFEE_CXX_PASTE(a, b) COFFEE_CXX_PASTE_(a, b)
+#define COFFEE_CXX_TRY()                                                 \
+  { volatile CoffeeCatch::Sentinel COFFEE_CXX_PASTE(cc_sentinel_, __LINE__); \
+    COFFEE_TRY()
+#define COFFEE_CXX_CATCH() COFFEE_CATCH()
+#define COFFEE_CXX_END() }
 }
 #endif
 
