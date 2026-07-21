@@ -93,8 +93,15 @@ jobs:
             LDFLAGS="-fsanitize=undefined"
 
   macos:
-    name: build+test (macOS arm64, clang)
-    runs-on: macos-14
+    name: build+test (macOS ${{ matrix.arch }}, clang)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-14 is Apple Silicon; macos-15-intel is the Intel image.
+          - { arch: arm64,  runner: macos-14 }
+          - { arch: x86-64, runner: macos-15-intel }
     steps:
       - uses: actions/checkout@v6
 
