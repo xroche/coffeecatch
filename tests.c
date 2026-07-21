@@ -17,6 +17,7 @@
 #include <string.h>
 #include <signal.h>
 #include <stdint.h>
+#include <errno.h>
 #include <pthread.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -321,6 +322,48 @@ static NOINLINE int test_no_context_dies(void) {
   return 0;
 }
 
+static struct sigaction errno_cc_action;
+static volatile int errno_to_inject;
+
+/* Chain ahead of coffeecatch: stamp si_errno (the kernel never sets it for the
+ * faults we catch, so it is otherwise unreachable) and hand off to the real
+ * handler, which copies the siginfo and reports it in the message. */
+static void errno_shim(int sig, siginfo_t *si, void *uc) {
+  si->si_errno = errno_to_inject;
+  errno_cc_action.sa_sigaction(sig, si, uc);
+}
+
+/* A signal carrying si_errno reports that errno's description, and does not
+ * lose it to the text appended afterwards -- the two bugs from issue #59. */
+static NOINLINE int check_errno_message(int err) {
+  volatile int caught = 0, ok = 0;
+  errno_to_inject = err;
+  COFFEE_TRY() {
+    /* coffeecatch's handler is installed now; capture it and insert the shim. */
+    struct sigaction shim;
+    sigaction(SIGSEGV, NULL, &errno_cc_action);
+    memset(&shim, 0, sizeof shim);
+    shim.sa_sigaction = errno_shim;
+    shim.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&shim.sa_mask);
+    sigaction(SIGSEGV, &shim, NULL);
+    CRASH();
+  } COFFEE_CATCH() {
+    const char *const msg = coffeecatch_get_message();
+    /* strerror() at runtime, so the match survives platform wording. */
+    ok = msg != NULL && strstr(msg, strerror(err)) != NULL;
+    caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  return caught && ok;
+}
+
+static NOINLINE int test_errno_message(void) {
+  CHECK(check_errno_message(EACCES));
+  CHECK(check_errno_message(EINVAL));
+  return 0;
+}
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -343,6 +386,7 @@ static const struct test tests[] = {
   { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
   { "concurrent catches (threads)", test_threads, NULL },
   { "no context: crash still kills", test_no_context_dies, NULL },
+  { "si_errno in message",          test_errno_message, NULL },
 };
 
 static int run_forked(const struct test *t) {

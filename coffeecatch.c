@@ -1312,12 +1312,21 @@ const char* coffeecatch_get_message() {
     if (t->si.si_errno != 0) {
       snprintf(&buffer[buffer_offs], buffer_len - buffer_offs, ": ");
       buffer_offs += strlen(&buffer[buffer_offs]);
-      if (strerror_r(t->si.si_errno, &buffer[buffer_offs],
-                     buffer_len - buffer_offs) == 0) {
+      const char* err_str = "unknown error";
+      if (
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+          (err_str = strerror_r(t->si.si_errno, &buffer[buffer_offs],
+                     buffer_len - buffer_offs)) != &buffer[buffer_offs]
+#else
+
+          strerror_r(t->si.si_errno, &buffer[buffer_offs],
+                     buffer_len - buffer_offs) != 0
+#endif
+      ) {
         snprintf(&buffer[buffer_offs], buffer_len - buffer_offs,
-                 "unknown error");
-        buffer_offs += strlen(&buffer[buffer_offs]);
+                 "%s", err_str);
       }
+      buffer_offs += strlen(&buffer[buffer_offs]);
     }
 
     /* Sending process ID. */
