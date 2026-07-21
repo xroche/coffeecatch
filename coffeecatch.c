@@ -31,6 +31,9 @@
 #define USE_LIBUNWIND
 #endif
 
+/* __APPLE__ deliberately does not enable USE_UNWIND: _Unwind_Backtrace() in the
+ * handler takes the dyld loader lock per frame on Darwin and can self-deadlock. */
+
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
 
@@ -232,6 +235,7 @@ typedef struct native_code_handler_struct {
   int code;
   siginfo_t si;
   ucontext_t uc;
+  uintptr_t pc;
 
   /* Uwind context. */
 #if (defined(USE_CORKSCREW))
@@ -544,6 +548,8 @@ static void coffeecatch_fill_backtrace(native_code_handler_struct *const t,
 }
 #endif
 
+static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc);
+
 /* Copy context infos (signal code, etc.) */
 static void coffeecatch_copy_context(native_code_handler_struct *const t,
                                      const int code, siginfo_t *const si,
@@ -553,8 +559,12 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
   if (sc != NULL) {
     ucontext_t *const uc = (ucontext_t*) sc;
     t->uc = *uc;
+    /* Capture the PC now: on Darwin uc_mcontext points into the kernel signal
+     * frame, gone once we siglongjmp() out and revert the altstack. */
+    t->pc = coffeecatch_get_pc_from_ucontext(uc);
   } else {
     memset(&t->uc, 0, sizeof(t->uc));
+    t->pc = 0;
   }
 
 #ifdef USE_UNWIND
@@ -570,6 +580,10 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
 /* Return the thread-specific native_code_handler_struct structure, or
  * @c null if no such structure is available. */
 static native_code_handler_struct* coffeecatch_get() {
+  /* pthread_getspecific() is only valid once the key exists. */
+  if (native_code_g.initialized == 0) {
+    return NULL;
+  }
   return (native_code_handler_struct*)
       pthread_getspecific(native_code_thread);
 }
@@ -678,7 +692,7 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
 
 /* Internal globals initialization. */
 static int coffeecatch_handler_setup_global(void) {
-  if (native_code_g.initialized++ == 0) {
+  if (native_code_g.initialized == 0) {
     size_t i;
     struct sigaction sa_abort;
     struct sigaction sa_pass;
@@ -720,6 +734,9 @@ static int coffeecatch_handler_setup_global(void) {
 
     DEBUG(print("installed global signal handlers\n"));
   }
+
+  /* Bump the refcount only after the key exists. */
+  native_code_g.initialized++;
 
   /* OK. */
   return 0;
@@ -1020,6 +1037,7 @@ static const char* coffeecatch_desc_sig(int sig, int code) {
       return "Child";
     }
     break;
+#ifdef SIGPOLL
   case SIGPOLL:
     switch(code) {
     case POLL_IN:
@@ -1038,6 +1056,7 @@ static const char* coffeecatch_desc_sig(int sig, int code) {
       return "Pool";
     }
     break;
+#endif
   case SIGABRT:
     return "Process abort signal";
   case SIGALRM:
@@ -1146,8 +1165,12 @@ uintptr_t coffeecatch_get_backtrace(ssize_t index) {
 static uintptr_t coffeecatch_get_pc_from_ucontext(const ucontext_t *uc) {
 #if (defined(__arm__))
   return uc->uc_mcontext.arm_pc;
-#elif defined(__aarch64__)
+#elif (defined(__APPLE__) && defined(__aarch64__))
+  return uc->uc_mcontext->__ss.__pc;
+#elif (defined(__aarch64__))
   return uc->uc_mcontext.pc;
+#elif (defined(__APPLE__) && defined(__x86_64__))
+  return uc->uc_mcontext->__ss.__rip;
 #elif (defined(__x86_64__))
   return uc->uc_mcontext.gregs[REG_RIP];
 #elif (defined(__i386))
@@ -1304,9 +1327,8 @@ const char* coffeecatch_get_message() {
       buffer_offs += strlen(&buffer[buffer_offs]);
     }
 
-    /* Faulting program counter location. */
-    if (coffeecatch_get_pc_from_ucontext(&t->uc) != 0) {
-      const uintptr_t pc = coffeecatch_get_pc_from_ucontext(&t->uc);
+    if (t->pc != 0) {
+      const uintptr_t pc = t->pc;
       snprintf(&buffer[buffer_offs], buffer_len - buffer_offs, " ");
       buffer_offs += strlen(&buffer[buffer_offs]);
       format_pc_address(&buffer[buffer_offs], buffer_len - buffer_offs, pc);
@@ -1319,7 +1341,7 @@ const char* coffeecatch_get_message() {
   } else {
     /* Static buffer in case of emergency */
     static char buffer[256];
-#ifdef _GNU_SOURCE
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
     return strerror_r(error, &buffer[0], sizeof(buffer));
 #else
     const int code = strerror_r(error, &buffer[0], sizeof(buffer));
