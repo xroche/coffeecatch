@@ -326,8 +326,7 @@ static struct sigaction errno_cc_action;
 static volatile int errno_to_inject;
 
 /* Chain ahead of coffeecatch: stamp si_errno (the kernel never sets it for the
- * faults we catch, so it is otherwise unreachable) and hand off to the real
- * handler, which copies the siginfo and reports it in the message. */
+ * faults we can synthesize) and hand off to the real handler. */
 static void errno_shim(int sig, siginfo_t *si, void *uc) {
   si->si_errno = errno_to_inject;
   errno_cc_action.sa_sigaction(sig, si, uc);
@@ -340,13 +339,12 @@ static NOINLINE int check_errno_message(int err) {
   errno_to_inject = err;
   COFFEE_TRY() {
     /* coffeecatch's handler is installed now; capture it and insert the shim. */
-    struct sigaction shim;
-    sigaction(SIGSEGV, NULL, &errno_cc_action);
-    memset(&shim, 0, sizeof shim);
-    shim.sa_sigaction = errno_shim;
-    shim.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    struct sigaction shim = {
+      .sa_sigaction = errno_shim,
+      .sa_flags = SA_SIGINFO | SA_ONSTACK,
+    };
     sigemptyset(&shim.sa_mask);
-    sigaction(SIGSEGV, &shim, NULL);
+    sigaction(SIGSEGV, &shim, &errno_cc_action);
     CRASH();
   } COFFEE_CATCH() {
     const char *const msg = coffeecatch_get_message();
