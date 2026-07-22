@@ -136,10 +136,8 @@ static NOINLINE int test_cxx_return_from_try(void) {
 }
 
 /* Nested COFFEE_CXX_TRY must compile (the sentinel names differ, so an embedder
- * building with -Wshadow can nest them) and both sentinels must balance the
- * cleanup. Neither block crashes on purpose: a signal in a nested block unwinds
- * to the outermost handler over the inner sentinel -- that is the siglongjmp
- * caveat, covered by the C suite's test_nested, not a nesting feature. */
+ * building with -Wshadow can nest them) and balance the cleanup on the no-crash
+ * path. The crashing-nested and mixed C/C++ cases follow. */
 static NOINLINE int test_cxx_nested(void) {
   volatile int outer_reached = 0, inner_reached = 0;
   volatile int outer_caught = 0, inner_caught = 0;
@@ -161,6 +159,66 @@ static NOINLINE int test_cxx_nested(void) {
   return 0;
 }
 
+/* A crash in a nested block collapses to the OUTERMOST handler whatever macro
+ * family each level uses: the inner catch is skipped and the reentry depth must
+ * still return to zero. That rebalance relies on the reset in
+ * coffeecatch_try_jump_userland; without it these leave the thread wedged
+ * inside. The three cases cover C++/C++, C-outer/C++-inner, and C++-outer/
+ * C-inner nesting. */
+static NOINLINE int test_cxx_nested_inner_crash(void) {
+  volatile int outer_caught = 0, inner_caught = 0;
+  COFFEE_CXX_TRY() {
+    COFFEE_CXX_TRY() {
+      CRASH();
+    } COFFEE_CXX_CATCH() {
+      inner_caught = 1;
+    } COFFEE_CXX_END();
+  } COFFEE_CXX_CATCH() {
+    outer_caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_CXX_END();
+  CHECK(!coffeecatch_inside());
+  CHECK(outer_caught);
+  CHECK(!inner_caught);
+  return 0;
+}
+
+static NOINLINE int test_mixed_c_outer_cxx_inner(void) {
+  volatile int outer_caught = 0, inner_caught = 0;
+  COFFEE_TRY() {
+    COFFEE_CXX_TRY() {
+      CRASH();
+    } COFFEE_CXX_CATCH() {
+      inner_caught = 1;
+    } COFFEE_CXX_END();
+  } COFFEE_CATCH() {
+    outer_caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  CHECK(!coffeecatch_inside());
+  CHECK(outer_caught);
+  CHECK(!inner_caught);
+  return 0;
+}
+
+static NOINLINE int test_mixed_cxx_outer_c_inner(void) {
+  volatile int outer_caught = 0, inner_caught = 0;
+  COFFEE_CXX_TRY() {
+    COFFEE_TRY() {
+      CRASH();
+    } COFFEE_CATCH() {
+      inner_caught = 1;
+    } COFFEE_END();
+  } COFFEE_CXX_CATCH() {
+    outer_caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_CXX_END();
+  CHECK(!coffeecatch_inside());
+  CHECK(outer_caught);
+  CHECK(!inner_caught);
+  return 0;
+}
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -176,6 +234,9 @@ static const struct test tests[] = {
   { "C++: throw inside catch",          test_cxx_throw_inside_catch,   NULL },
   { "C++: return from try cleans up",   test_cxx_return_from_try,      NULL },
   { "C++: nested try",                  test_cxx_nested,               NULL },
+  { "C++: nested inner crash",          test_cxx_nested_inner_crash,   NULL },
+  { "mixed: C outer / C++ inner",       test_mixed_c_outer_cxx_inner,  NULL },
+  { "mixed: C++ outer / C inner",       test_mixed_cxx_outer_c_inner,  NULL },
 };
 
 static int run_forked(const struct test *t) {
