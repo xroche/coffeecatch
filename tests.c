@@ -371,8 +371,7 @@ static NOINLINE int test_cleanup_no_setup(void) {
 
 #ifdef COFFEE_TESTING
 /* A setup() that fails at the per-thread alloc must roll back the global install
- * (#66): the SIGSEGV disposition is left as it was, not with coffeecatch's
- * SA_SIGINFO handler leaked in place. */
+ * (#66): the SIGSEGV disposition is restored, not left as coffeecatch's handler. */
 extern int coffeecatch_test_force_alloc_failure;
 static NOINLINE int test_setup_failure_rolls_back(void) {
   struct sigaction before, after;

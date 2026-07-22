@@ -785,8 +785,8 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
  * Create a native_code_handler_struct structure.
  **/
 #ifdef COFFEE_TESTING
-/* Test seam (#66): when nonzero, the per-thread init fails, so the setup-failure
-   rollback can be exercised deterministically. Defined only in the test build. */
+/* Test seam (#66): when nonzero, the per-thread init fails so the setup-failure
+   rollback can be exercised. */
 int coffeecatch_test_force_alloc_failure = 0;
 #endif
 
