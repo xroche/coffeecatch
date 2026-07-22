@@ -1460,8 +1460,11 @@ int coffeecatch_setup() {
  */
 void coffeecatch_cleanup() {
   native_code_handler_struct *const t = coffeecatch_get();
-  assert(t != NULL);
-  assert(t->reenter > 0);
+  /* COFFEE_END() runs even when coffeecatch_setup() failed and no context was
+     entered (t == NULL on alloc failure, reenter == 0 on global-install failure). */
+  if (t == NULL || t->reenter == 0) {
+    return;
+  }
   t->reenter--;
   if (t->reenter == 0) {
     t->ctx_is_set = 0;

@@ -362,6 +362,13 @@ static NOINLINE int test_errno_message(void) {
   return 0;
 }
 
+/* COFFEE_END() (== coffeecatch_cleanup) fires even when coffeecatch_setup()
+ * failed: no per-thread context exists, so t is NULL. Pre-#57 this NULL-derefs. */
+static NOINLINE int test_cleanup_no_setup(void) {
+  coffeecatch_cleanup();   /* COFFEE_END() with no established context */
+  return 0;                /* not crashing is the pass */
+}
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -385,6 +392,7 @@ static const struct test tests[] = {
   { "concurrent catches (threads)", test_threads, NULL },
   { "no context: crash still kills", test_no_context_dies, NULL },
   { "si_errno in message",          test_errno_message, NULL },
+  { "cleanup without setup",        test_cleanup_no_setup, NULL },
 };
 
 static int run_forked(const struct test *t) {
