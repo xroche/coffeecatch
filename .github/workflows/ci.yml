@@ -1,10 +1,7 @@
-# Build and test CoffeeCatch across compilers, architectures, and UBSan.
+# Build and test CoffeeCatch across compilers, architectures, macOS, and UBSan.
 # The library ships as a hand-written Makefile, so CI drives it directly: that
 # is exactly what rotted unnoticed before (transposed calloc args and a stale
 # link order broke `make` on modern toolchains, with no CI to catch it).
-# macOS is not covered: the ucontext register access and a few signals in
-# coffeecatch.c are Linux/Android-only and do not compile on Darwin. The arm64
-# Linux leg is the closest proxy for the Android arm64 target.
 name: CI
 
 on:
@@ -94,3 +91,22 @@ jobs:
           make check \
             CFLAGS="-O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
             LDFLAGS="-fsanitize=undefined"
+
+  macos:
+    name: build+test (macOS ${{ matrix.arch }}, clang)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos defaults to Apple Silicon; macos-26-intel will be the last Intel image.
+          - { arch: arm64,  runner: macos-latest }
+          - { arch: x86-64, runner: macos-26-intel }
+    steps:
+      - uses: actions/checkout@v6
+
+      # The Makefile is portable (it switches to a .dylib link on Darwin), and
+      # the tests link the static archive, so macOS runs the same
+      # `make all check` on a second libc/kernel and on Apple clang.
+      - name: Build and test
+        run: make all check
