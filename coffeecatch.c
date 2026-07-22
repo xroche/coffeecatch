@@ -65,6 +65,13 @@
 #include <dlfcn.h>
 #include "coffeecatch.h"
 
+/* strerror_r has two forms: the GNU one returns char* (glibc and bionic API>=23
+   select it under _GNU_SOURCE), the XSI one returns int (musl, Darwin, default). */
+#if defined(_GNU_SOURCE) \
+    && (defined(__GLIBC__) || (defined(__BIONIC__) && __ANDROID_API__ >= 23))
+#define COFFEE_STRERROR_R_CHAR 1
+#endif
+
 /*#define NDK_DEBUG 1*/
 #if ( defined(NDK_DEBUG) && ( NDK_DEBUG == 1 ) )
 #define DEBUG(A) do { A; } while(0)
@@ -1314,7 +1321,7 @@ const char* coffeecatch_get_message() {
       buffer_offs += strlen(&buffer[buffer_offs]);
       const char* err_str = "unknown error";
       if (
-#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+#if defined(COFFEE_STRERROR_R_CHAR)
           (err_str = strerror_r(t->si.si_errno, &buffer[buffer_offs],
                      buffer_len - buffer_offs)) != &buffer[buffer_offs]
 #else
@@ -1350,7 +1357,7 @@ const char* coffeecatch_get_message() {
   } else {
     /* Static buffer in case of emergency */
     static char buffer[256];
-#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+#if defined(COFFEE_STRERROR_R_CHAR)
     return strerror_r(error, &buffer[0], sizeof(buffer));
 #else
     const int code = strerror_r(error, &buffer[0], sizeof(buffer));
