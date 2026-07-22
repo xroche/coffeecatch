@@ -69,7 +69,7 @@
    select it under _GNU_SOURCE), the XSI one returns int (musl, Darwin, default). */
 #if defined(_GNU_SOURCE) \
     && (defined(__GLIBC__) || (defined(__BIONIC__) && __ANDROID_API__ >= 23))
-#define COFFEE_STRERROR_R_CHAR 1
+#define COFFEE_STRERROR_R_CHAR
 #endif
 
 /*#define NDK_DEBUG 1*/
