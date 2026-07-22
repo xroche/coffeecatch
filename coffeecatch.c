@@ -31,8 +31,13 @@
 #define USE_LIBUNWIND
 #endif
 
-/* __APPLE__ deliberately does not enable USE_UNWIND: _Unwind_Backtrace() in the
- * handler takes the dyld loader lock per frame on Darwin and can self-deadlock. */
+/* Darwin cannot use _Unwind_Backtrace() in the handler: it takes the dyld
+ * loader lock per frame and would self-deadlock on a crash holding that lock.
+ * Walk the frame-pointer chain instead (async-signal-safe, pure reads). */
+#ifdef __APPLE__
+#define USE_UNWIND
+#define USE_FRAMEPOINTER
+#endif
 
 /* #undef NO_USE_SIGALTSTACK */
 /* #undef USE_SILENT_SIGALTSTACK */
@@ -51,7 +56,7 @@
     defined(__arm__) && !defined(__BIONIC_HAVE_STRUCT_SIGCONTEXT)
 #include <asm/sigcontext.h>
 #endif 
-#if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
+#if (defined(USE_UNWIND) && !defined(USE_CORKSCREW) && !defined(USE_FRAMEPOINTER))
 #include <unwind.h>
 /* "Continue unwinding" is _URC_OK on ARM EHABI, _URC_NO_REASON on the Itanium
  * ABI; both are 0, and both are enum constants #if cannot see -- so gate on ABI. */
@@ -277,7 +282,7 @@ static native_code_global_struct native_code_g =
 /* Thread variable holding context. */
 pthread_key_t native_code_thread;
 
-#if (defined(USE_UNWIND) && !defined(USE_CORKSCREW))
+#if (defined(USE_UNWIND) && !defined(USE_CORKSCREW) && !defined(USE_FRAMEPOINTER))
 /* Unwind callback */
 static _Unwind_Reason_Code
 coffeecatch_unwind_callback(struct _Unwind_Context* context, void* arg) {
@@ -497,6 +502,68 @@ static void coffeecatch_mark_alarm(native_code_handler_struct *const t) {
 }
 
 #ifdef USE_UNWIND
+#ifdef USE_FRAMEPOINTER
+/* Walk the frame-pointer chain from the trapping context. Both the arm64 and
+ * x86-64 ABIs store [saved fp][return address] at the frame pointer, so one
+ * loop covers both. Pure memory reads keep it async-signal-safe; a garbage
+ * link faults into the unwind_guarded jump rather than reading wild memory. */
+static void coffeecatch_fp_backtrace(native_code_handler_struct *const t,
+                                     void *const sc) {
+  const ucontext_t *const uc = (const ucontext_t*) sc;
+  uintptr_t fp;
+#if defined(__aarch64__)
+  /* If the trapping function is a leaf, it has not spilled its return address,
+   * so the immediate caller lives only in LR, not in the frame chain. */
+  uintptr_t lr;
+#endif
+
+  t->frames_size = 0;
+  if (uc == NULL) {
+    return;
+  }
+#if defined(__aarch64__)
+  t->frames[t->frames_size++] = (uintptr_t) uc->uc_mcontext->__ss.__pc;
+  lr = (uintptr_t) uc->uc_mcontext->__ss.__lr;
+  fp = (uintptr_t) uc->uc_mcontext->__ss.__fp;
+#elif defined(__x86_64__)
+  t->frames[t->frames_size++] = (uintptr_t) uc->uc_mcontext->__ss.__rip;
+  fp = (uintptr_t) uc->uc_mcontext->__ss.__rbp;
+#else
+#error "USE_FRAMEPOINTER: unsupported architecture"
+#endif
+
+  /* Require each frame pointer to climb and stay word-aligned, so a corrupt
+   * link ends the walk instead of chasing it. */
+  while (fp != 0 && (fp & (sizeof(uintptr_t) - 1)) == 0
+         && t->frames_size < BACKTRACE_FRAMES_MAX) {
+    const uintptr_t *const frame = (const uintptr_t*) fp;
+    const uintptr_t next_fp = frame[0];
+    const uintptr_t ret = frame[1];
+#if defined(__aarch64__)
+    /* Emit LR once, ahead of the first spilled return address, unless the
+     * frame already spilled that same value (non-leaf) -- then it would
+     * duplicate the entry the walk is about to add. */
+    if (lr != 0) {
+      if (lr != ret) {
+        t->frames[t->frames_size++] = lr;
+      }
+      lr = 0;
+      if (t->frames_size == BACKTRACE_FRAMES_MAX) {
+        break;
+      }
+    }
+#endif
+    if (ret != 0) {
+      t->frames[t->frames_size++] = ret;
+    }
+    if (next_fp <= fp) {
+      break;
+    }
+    fp = next_fp;
+  }
+}
+#endif
+
 /* May fault on a corrupt stack: only run under coffeecatch_fill_backtrace(). */
 static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
                                           siginfo_t *const si, void *const sc) {
@@ -510,6 +577,10 @@ static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
 #ifdef USE_CORKSCREW
   t->frames_size = coffeecatch_backtrace_signal(si, sc, t->frames, 0,
                                                 BACKTRACE_FRAMES_MAX);
+#elif defined(USE_FRAMEPOINTER)
+  (void) si;
+  /* Seeded from the signal context, so no frames to skip. */
+  coffeecatch_fp_backtrace(t, sc);
 #else
   (void) si;
   (void) sc;

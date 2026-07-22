@@ -385,6 +385,59 @@ static NOINLINE int test_setup_failure_rolls_back(void) {
 }
 #endif
 
+/* Backtrace capture is only compiled in where coffeecatch collects frames:
+ * Darwin's frame-pointer walk, and the -DUSE_UNWIND builds (Android, CI leg). */
+#if defined(__APPLE__) || defined(USE_UNWIND)
+#define HAVE_BACKTRACE
+#endif
+
+static volatile sig_atomic_t bt_saw_crash, bt_saw_mid;
+
+static void bt_cb(void *arg, const char *module, uintptr_t addr,
+                  const char *function, uintptr_t offset) {
+  (void) arg; (void) module; (void) addr; (void) offset;
+  if (function != NULL) {
+    if (strcmp(function, "bt_crash") == 0) bt_saw_crash = 1;
+    if (strcmp(function, "bt_mid") == 0)   bt_saw_mid = 1;
+  }
+}
+
+static volatile int bt_sink;
+static NOINLINE void bt_crash(void) { CRASH(); }
+/* bt_sink++ after the call keeps bt_mid from tail-calling bt_crash, so it holds
+ * a real frame the walk must recover. On arm64 that frame is reachable only via
+ * LR (bt_crash faults as a leaf), so this also exercises the LR seeding. */
+static NOINLINE void bt_mid(void) { bt_crash(); bt_sink++; }
+
+/* A caught crash exposes a backtrace naming the frames that led to it. */
+static NOINLINE int test_backtrace(void) {
+  volatile int caught = 0;
+  volatile size_t size = 0;
+  bt_saw_crash = 0;
+  bt_saw_mid = 0;
+  COFFEE_TRY() {
+    bt_mid();
+  } COFFEE_CATCH() {
+    caught = 1;
+    size = coffeecatch_get_backtrace_size();
+    coffeecatch_get_backtrace_info(bt_cb, NULL);
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  CHECK(caught);
+#if defined(__APPLE__)
+  /* The frame-pointer walk is what this feature adds: verify it reaches past
+   * the faulting leaf to its caller, and that both symbolize. */
+  CHECK(size > 0);
+  CHECK(bt_saw_crash);
+  CHECK(bt_saw_mid);
+#elif defined(HAVE_BACKTRACE)
+  CHECK(size > 0);        /* unwind path present; symbol names not guaranteed */
+#else
+  CHECK(size == 0);       /* no collector compiled in */
+#endif
+  return 0;
+}
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -412,6 +465,7 @@ static const struct test tests[] = {
 #ifdef COFFEE_TESTING
   { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
 #endif
+  { "backtrace names the frames",   test_backtrace,   NULL },
 };
 
 static int run_forked(const struct test *t) {
