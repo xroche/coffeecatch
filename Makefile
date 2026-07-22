@@ -70,8 +70,15 @@ $(SHLIB): $(LIBOBJ)
 
 # tests/sample link the static archive: no LD_LIBRARY_PATH, identical run on
 # Linux and macOS. The C suite links with $(CC), the C++ suite with $(CXX).
-tests: tests.o $(STATICLIB)
-	$(CC) $(CFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
+# The C suite links an instrumented coffeecatch instead of the archive:
+# -DCOFFEE_TESTING adds a failure-injection seam for the setup-failure test and
+# stays out of the shipped $(STATICLIB)/$(SHLIB).
+tests.o: tests.c coffeecatch.h
+	$(CC) $(CPPFLAGS) -DCOFFEE_TESTING $(CFLAGS) -c $< -o $@
+coffeecatch-testing.o: coffeecatch.c coffeecatch.h
+	$(CC) $(CPPFLAGS) -DCOFFEE_TESTING $(CFLAGS) -c $< -o $@
+tests: tests.o coffeecatch-testing.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 tests_cxx: tests_cxx.o $(STATICLIB)
 	$(CXX) $(CXXFLAGS) $< $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
 sample: sample.o $(STATICLIB)

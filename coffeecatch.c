@@ -784,11 +784,23 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
 /**
  * Create a native_code_handler_struct structure.
  **/
+#ifdef COFFEE_TESTING
+/* Test seam (#66): when nonzero, the per-thread init fails, so the setup-failure
+   rollback can be exercised deterministically. Defined only in the test build. */
+int coffeecatch_test_force_alloc_failure = 0;
+#endif
+
 static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(void) {
   stack_t stack;
-  native_code_handler_struct *const t =
-    calloc(1, sizeof(native_code_handler_struct));
+  native_code_handler_struct *t;
 
+#ifdef COFFEE_TESTING
+  if (coffeecatch_test_force_alloc_failure) {
+    return NULL;
+  }
+#endif
+
+  t = calloc(1, sizeof(native_code_handler_struct));
   if (t == NULL) {
     return NULL;
   }
@@ -822,6 +834,8 @@ static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(v
   return t;
 }
 
+static int coffeecatch_handler_cleanup(void);
+
 /**
  * Acquire the crash handler for the current thread.
  * The coffeecatch_handler_cleanup() must be called to release allocated
@@ -851,7 +865,10 @@ static int coffeecatch_handler_setup(int setup_thread) {
     native_code_handler_struct *const t =
       coffeecatch_native_code_handler_struct_init();
 
+    /* The global install above bumped the refcount; undo it so a failed setup
+       does not leave the handlers installed for the life of the process (#66). */
     if (t == NULL) {
+      coffeecatch_handler_cleanup();
       return -1;
     }
 
@@ -860,6 +877,7 @@ static int coffeecatch_handler_setup(int setup_thread) {
     /* Set thread-specific value. */
     if (pthread_setspecific(native_code_thread, t) != 0) {
       coffeecatch_native_code_handler_struct_free(t);
+      coffeecatch_handler_cleanup();
       return -1;
     }
 

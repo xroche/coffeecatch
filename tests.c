@@ -369,6 +369,23 @@ static NOINLINE int test_cleanup_no_setup(void) {
   return 0;                /* not crashing is the pass */
 }
 
+#ifdef COFFEE_TESTING
+/* A setup() that fails at the per-thread alloc must roll back the global install
+ * (#66): the SIGSEGV disposition is left as it was, not with coffeecatch's
+ * SA_SIGINFO handler leaked in place. */
+extern int coffeecatch_test_force_alloc_failure;
+static NOINLINE int test_setup_failure_rolls_back(void) {
+  struct sigaction before, after;
+  CHECK(sigaction(SIGSEGV, NULL, &before) == 0);
+  coffeecatch_test_force_alloc_failure = 1;
+  CHECK(coffeecatch_setup() != 0);
+  coffeecatch_test_force_alloc_failure = 0;
+  CHECK(sigaction(SIGSEGV, NULL, &after) == 0);
+  CHECK((after.sa_flags & SA_SIGINFO) == (before.sa_flags & SA_SIGINFO));
+  return 0;
+}
+#endif
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -393,6 +410,9 @@ static const struct test tests[] = {
   { "no context: crash still kills", test_no_context_dies, NULL },
   { "si_errno in message",          test_errno_message, NULL },
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
+#ifdef COFFEE_TESTING
+  { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
+#endif
 };
 
 static int run_forked(const struct test *t) {
