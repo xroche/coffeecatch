@@ -1460,7 +1460,11 @@ int coffeecatch_setup() {
  */
 void coffeecatch_cleanup() {
   native_code_handler_struct *const t = coffeecatch_get();
-  assert(t != NULL);
+  /* COFFEE_END() runs even when coffeecatch_setup() failed: the per-thread
+     context was never allocated, so t is NULL and there is nothing to undo. */
+  if (t == NULL) {
+    return;
+  }
   assert(t->reenter > 0);
   t->reenter--;
   if (t->reenter == 0) {
