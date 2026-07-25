@@ -385,6 +385,80 @@ static NOINLINE int test_setup_failure_rolls_back(void) {
 }
 #endif
 
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(USE_UNWIND)
+#define HAVE_BACKTRACE
+#endif
+
+#if defined(HAVE_BACKTRACE)
+#if defined(__ANDROID__) || defined(__APPLE__)
+#define HAVE_BACKTRACE_NAMES
+#endif
+
+static volatile sig_atomic_t bt_saw_crash, bt_saw_mid;
+
+static void bt_cb(void *arg, const char *module, uintptr_t addr,
+                  const char *function, uintptr_t offset) {
+  (void) arg; (void) module; (void) addr; (void) offset;
+  if (function != NULL) {
+    if (strncmp(function, "bt_crash", strlen("bt_crash")) == 0) bt_saw_crash++;
+    if (strcmp(function, "bt_mid") == 0) bt_saw_mid++;
+  }
+}
+
+static volatile int bt_sink;
+static NOINLINE void bt_benign(void) { --bt_sink; }
+static NOINLINE void bt_crash(void) { bt_benign(); CRASH(); }
+static NOINLINE void bt_crash_leaf(void) { CRASH(); }
+static NOINLINE void bt_mid(int in_leaf) {
+#if defined (__aarch64__)
+  if (in_leaf) {
+    bt_crash_leaf(); /* crash in leaf; BT will skip immediate caller. */
+  } else
+#else
+  (void)in_leaf;
+#endif
+  {
+    bt_crash(); /* aarch64: crash in non-leaf, all callers present. */
+  }
+  bt_sink++; /* prevent tail-call to crash(), generating recoverable frame. */
+ }
+
+/* A caught crash exposes a backtrace naming the frames that led to it. */
+static NOINLINE int check_backtrace(int in_leaf) {
+  volatile int caught = 0;
+  volatile size_t size = 0;
+  bt_saw_crash = 0;
+  bt_saw_mid = 0;
+  COFFEE_TRY() {
+    bt_mid(in_leaf);
+  } COFFEE_CATCH() {
+    caught = 1;
+    size = coffeecatch_get_backtrace_size();
+    coffeecatch_get_backtrace_info(bt_cb, NULL);
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  CHECK(caught);
+  CHECK(size > 2);
+#if defined(HAVE_BACKTRACE_NAMES)
+  CHECK(bt_saw_crash == 1);
+#if defined(__arm64__)
+  if (!in_leaf) /* bt_mid() won't appear for aarch64; leaf lacks stack frame */
+#endif
+    CHECK(bt_saw_mid);
+#endif
+  return 0;
+}
+
+static NOINLINE int test_backtrace(void) {
+  return check_backtrace(0)
+#if defined(__aarch64__)
+    || check_backtrace(1)
+#endif
+  ;
+}
+
+#endif // HAVE_BACKTRACE
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -411,6 +485,9 @@ static const struct test tests[] = {
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
 #ifdef COFFEE_TESTING
   { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
+#endif
+#ifdef HAVE_BACKTRACE
+  { "backtrace frames",             test_backtrace,   NULL },
 #endif
 };
 
