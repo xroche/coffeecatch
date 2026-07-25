@@ -508,11 +508,11 @@ static void coffeecatch_mark_alarm(native_code_handler_struct *const t) {
  * loop covers both. Pure memory reads keep it async-signal-safe; a garbage
  * link faults into the unwind_guarded jump rather than reading wild memory.
  *
- * A frameless leaf (one that makes no calls) never spills its return address,
- * so its immediate caller lives only in LR and is not recovered here -- the
- * walk resumes from the caller's frame. LR is not consulted: once a function
- * has made any call, LR holds a stale in-function address a frame walk cannot
- * tell from a real return, so a missing frame is preferred to a fabricated one. */
+ * LR is not consulted: past the first call it holds a stale in-function address
+ * indistinguishable from a real return, so a missing leaf-caller frame beats a
+ * fabricated one.
+ *
+ * arm64e only: __pc/__fp and spilled return addresses carry PAC bits, unstripped here. */
 static void coffeecatch_fp_backtrace(native_code_handler_struct *const t,
                                      void *const sc) {
   const ucontext_t *const uc = (const ucontext_t*) sc;

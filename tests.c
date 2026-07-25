@@ -418,7 +418,7 @@ static NOINLINE void bt_mid(int in_leaf) {
   (void)in_leaf;
 #endif
   {
-    bt_crash(); /* aarch64: crash in non-leaf, all callers present. */
+    bt_crash(); /* crash in non-leaf, all callers present. */
   }
   bt_sink++; /* prevent tail-call to crash(), generating recoverable frame. */
  }
@@ -441,8 +441,8 @@ static NOINLINE int check_backtrace(int in_leaf) {
   CHECK(size > 2);
 #if defined(HAVE_BACKTRACE_NAMES)
   CHECK(bt_saw_crash == 1);
-#if defined(__arm64__)
-  if (!in_leaf) /* bt_mid() won't appear for aarch64; leaf lacks stack frame */
+#if defined(__APPLE__) && defined(__aarch64__)
+  if (!in_leaf) /* fp walker drops a frameless leaf's immediate caller */
 #endif
     CHECK(bt_saw_mid);
 #endif
