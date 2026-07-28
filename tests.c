@@ -212,8 +212,9 @@ static void plain_old_handler(int code) {
   old_handler_ran = 1;
 }
 
-/* A pre-existing handler installed without SA_SIGINFO still gets called. */
-static NOINLINE int test_old_handler_plain(void) {
+/* Recovery wins over chaining: with a context armed, the previously installed
+ * handler must not be called. */
+static NOINLINE int test_old_handler_not_called_on_recovery(void) {
   volatile int caught = 0;
   old_handler_ran = 0;
   CHECK(signal(SIGSEGV, plain_old_handler) != SIG_ERR);
@@ -224,7 +225,28 @@ static NOINLINE int test_old_handler_plain(void) {
     coffeecatch_cancel_pending_alarm();
   } COFFEE_END();
   CHECK(caught);
-  CHECK(old_handler_ran);
+  CHECK(!old_handler_ran);
+  return 0;
+}
+
+/* Mimics ART's FaultManager, which aborts a fault it declines instead of
+ * returning. */
+static void nonreturning_old_handler(int code) {
+  (void) code;
+  _exit(70);
+}
+
+/* Such a handler must not keep an armed catch context from recovering. */
+static NOINLINE int test_old_handler_nonreturning(void) {
+  volatile int caught = 0;
+  CHECK(signal(SIGSEGV, nonreturning_old_handler) != SIG_ERR);
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  CHECK(caught);
   return 0;
 }
 
@@ -319,6 +341,32 @@ static NOINLINE int test_no_context_dies(void) {
   CHECK(waitpid(pid, &status, 0) == pid);
   alarm(0);
   CHECK(WIFSIGNALED(status));
+  return 0;
+}
+
+/* The other half of the contract: with no catch context, a fault still chains to
+ * the old handler. A holder thread keeps coffeecatch installed so it is reached. */
+static NOINLINE int test_old_handler_runs_uncaught(void) {
+  pid_t pid;
+  int status = 0;
+
+  fflush(NULL);
+  pid = fork();
+  CHECK(pid >= 0);
+  if (pid == 0) {
+    pthread_t th;
+    signal(SIGSEGV, nonreturning_old_handler);   /* pre-existing: saved as the old handler */
+    pthread_create(&th, NULL, holder_body, NULL);
+    while (!holder_armed) {
+      usleep(1000);
+    }
+    CRASH();          /* no context on this thread: must chain to the old handler */
+    _exit(0);         /* reached only if it did not */
+  }
+  alarm(20);
+  CHECK(waitpid(pid, &status, 0) == pid);
+  alarm(0);
+  CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 70);
   return 0;
 }
 
@@ -478,7 +526,9 @@ static const struct test tests[] = {
   { "nested throws to outermost",   test_nested,      NULL },
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
-  { "old handler without SA_SIGINFO", test_old_handler_plain, NULL },
+  { "old handler not called on recovery", test_old_handler_not_called_on_recovery, NULL },
+  { "old handler non-returning",    test_old_handler_nonreturning, NULL },
+  { "old handler runs when uncaught", test_old_handler_runs_uncaught, NULL },
   { "concurrent catches (threads)", test_threads, NULL },
   { "no context: crash still kills", test_no_context_dies, NULL },
   { "si_errno in message",          test_errno_message, NULL },

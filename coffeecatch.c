@@ -25,10 +25,11 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Both dynamic unwinders are dead on modern Android: dlopen of libunwind.so is
+ * refused since API 24 and libcorkscrew.so was removed in 5.0. _Unwind_Backtrace
+ * (USE_UNWIND) is the only backend that runs; the others stay reachable via -D. */
 #ifdef __ANDROID__
 #define USE_UNWIND
-#define USE_CORKSCREW
-#define USE_LIBUNWIND
 #endif
 
 /* Darwin cannot use _Unwind_Backtrace() in the handler: it takes the dyld
@@ -576,8 +577,10 @@ static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
 #ifdef USE_LIBUNWIND
   if (t->frames_size == 0) {
     size_t i;
-    t->frames_size = coffeecatch_unwind_signal(si, sc, t->uframes, 0,
-                                               BACKTRACE_FRAMES_MAX);
+    /* Returns -1 when libunwind.so is absent (the norm since API 24); clamp before it folds into a huge size_t. */
+    const ssize_t nb = coffeecatch_unwind_signal(si, sc, t->uframes, 0,
+                                                 BACKTRACE_FRAMES_MAX);
+    t->frames_size = nb > 0 ? (size_t) nb : 0;
     for(i = 0 ; i < t->frames_size ; i++) {
       t->frames[i].absolute_pc = (uintptr_t) t->uframes[i];
       t->frames[i].stack_top = 0;
@@ -662,12 +665,9 @@ int coffeecatch_cancel_pending_alarm() {
   return -1;
 }
 
-/* Internal signal pass-through. Allows to peek the "real" crash before
- * calling the Java handler. Remember than Java needs many of the signals
- * (for the JIT, for test-free NullPointerException handling, etc.)
- * We record the siginfo_t context in this function each time it is being
- * called, to be able to know what error caused an issue.
- */
+/* Internal signal handler for the "real" crash signals (SIGSEGV, SIGBUS, ...).
+ * A recovery context for the faulting thread wins; only an unclaimed fault is
+ * chained to the previously installed handler. */
 static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
                                     void *const sc) {
   native_code_handler_struct *t;
@@ -682,26 +682,19 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
   }
 #endif
 
-  /* Call the "real" Java handler for JIT and internals. */
-  coffeecatch_call_old_signal_handler(code, si, sc);
-
-  /* Still here ?
-   * FIXME TODO: This is the Dalvik behavior - but is it the SunJVM one ? */
-
   coffeecatch_start_alarm();
 
-  /* Available context ? */
+  /* Recover before chaining: under ART's libsigchain the JVM handler already ran
+   * and only reaches us for a fault it declined, so re-entering it may abort. */
   t = coffeecatch_get();
   if (t != NULL) {
-    /* An alarm() call was triggered. */
     coffeecatch_mark_alarm(t);
-
-    /* Take note of the signal. */
     coffeecatch_copy_context(t, code, si, sc);
-
-    /* Back to the future. */
     coffeecatch_try_jump_userland(t, code, si, sc);
   }
+
+  /* Not ours: chain to the previously installed handler. */
+  coffeecatch_call_old_signal_handler(code, si, sc);
 
   /* Nope. (abort() is signal-safe) */
   DEBUG(print("calling abort()\n"));

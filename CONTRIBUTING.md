@@ -39,10 +39,13 @@ Backtrace support is Android-only by default:
 ```c
 #ifdef __ANDROID__
 #define USE_UNWIND
-#define USE_CORKSCREW
-#define USE_LIBUNWIND
 #endif
 ```
+
+`USE_UNWIND` selects `_Unwind_Backtrace()`, symbolised through `dladdr`. The two
+dynamic loaders `USE_CORKSCREW` and `USE_LIBUNWIND` are no longer enabled here:
+both always fail on modern Android (libunwind.so dlopen refused since API 24,
+libcorkscrew.so removed in 5.0). They stay compilable as an explicit `-D` build.
 
 Off Android none of these exist, so the `native_code_handler_struct` `frames[]`
 member and the whole `_Unwind_*` / libcorkscrew / libunwind machinery are
