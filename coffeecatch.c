@@ -662,12 +662,9 @@ int coffeecatch_cancel_pending_alarm() {
   return -1;
 }
 
-/* Internal signal pass-through. Allows to peek the "real" crash before
- * calling the Java handler. Remember than Java needs many of the signals
- * (for the JIT, for test-free NullPointerException handling, etc.)
- * We record the siginfo_t context in this function each time it is being
- * called, to be able to know what error caused an issue.
- */
+/* Internal signal handler for the "real" crash signals (SIGSEGV, SIGBUS, ...).
+ * A recovery context for the faulting thread wins; only an unclaimed fault is
+ * chained to the previously installed handler. */
 static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
                                     void *const sc) {
   native_code_handler_struct *t;
@@ -682,26 +679,20 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
   }
 #endif
 
-  /* Call the "real" Java handler for JIT and internals. */
-  coffeecatch_call_old_signal_handler(code, si, sc);
-
-  /* Still here ?
-   * FIXME TODO: This is the Dalvik behavior - but is it the SunJVM one ? */
-
   coffeecatch_start_alarm();
 
-  /* Available context ? */
+  /* Recover before chaining: under ART's libsigchain the JVM handler runs
+   * ahead of us and only reaches us for faults it already declined, so calling
+   * it back merely re-enters it, which may abort rather than return. */
   t = coffeecatch_get();
   if (t != NULL) {
-    /* An alarm() call was triggered. */
     coffeecatch_mark_alarm(t);
-
-    /* Take note of the signal. */
     coffeecatch_copy_context(t, code, si, sc);
-
-    /* Back to the future. */
     coffeecatch_try_jump_userland(t, code, si, sc);
   }
+
+  /* Not ours: hand off to the "real" Java handler for JIT and internals. */
+  coffeecatch_call_old_signal_handler(code, si, sc);
 
   /* Nope. (abort() is signal-safe) */
   DEBUG(print("calling abort()\n"));
