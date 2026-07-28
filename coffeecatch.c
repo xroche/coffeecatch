@@ -576,8 +576,10 @@ static void coffeecatch_extract_backtrace(native_code_handler_struct *const t,
 #ifdef USE_LIBUNWIND
   if (t->frames_size == 0) {
     size_t i;
-    t->frames_size = coffeecatch_unwind_signal(si, sc, t->uframes, 0,
-                                               BACKTRACE_FRAMES_MAX);
+    /* Returns -1 when libunwind.so is absent (the norm since API 24); clamp before it folds into a huge size_t. */
+    const ssize_t nb = coffeecatch_unwind_signal(si, sc, t->uframes, 0,
+                                                 BACKTRACE_FRAMES_MAX);
+    t->frames_size = nb > 0 ? (size_t) nb : 0;
     for(i = 0 ; i < t->frames_size ; i++) {
       t->frames[i].absolute_pc = (uintptr_t) t->uframes[i];
       t->frames[i].stack_top = 0;
