@@ -25,10 +25,11 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Both dynamic unwinders are dead on modern Android: dlopen of libunwind.so is
+ * refused since API 24 and libcorkscrew.so was removed in 5.0. _Unwind_Backtrace
+ * (USE_UNWIND) is the only backend that runs; the others stay reachable via -D. */
 #ifdef __ANDROID__
 #define USE_UNWIND
-#define USE_CORKSCREW
-#define USE_LIBUNWIND
 #endif
 
 /* Darwin cannot use _Unwind_Backtrace() in the handler: it takes the dyld
