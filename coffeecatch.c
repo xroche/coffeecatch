@@ -681,9 +681,8 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
 
   coffeecatch_start_alarm();
 
-  /* Recover before chaining: under ART's libsigchain the JVM handler runs
-   * ahead of us and only reaches us for faults it already declined, so calling
-   * it back merely re-enters it, which may abort rather than return. */
+  /* Recover before chaining: under ART's libsigchain the JVM handler already ran
+   * and only reaches us for a fault it declined, so re-entering it may abort. */
   t = coffeecatch_get();
   if (t != NULL) {
     coffeecatch_mark_alarm(t);
@@ -691,7 +690,7 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
     coffeecatch_try_jump_userland(t, code, si, sc);
   }
 
-  /* Not ours: hand off to the "real" Java handler for JIT and internals. */
+  /* Not ours: chain to the previously installed handler. */
   coffeecatch_call_old_signal_handler(code, si, sc);
 
   /* Nope. (abort() is signal-safe) */

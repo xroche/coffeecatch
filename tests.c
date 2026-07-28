@@ -250,28 +250,6 @@ static NOINLINE int test_old_handler_nonreturning(void) {
   return 0;
 }
 
-/* The other half of the contract: a fault with no catch context still chains
- * to the previously installed handler. */
-static NOINLINE int test_old_handler_runs_uncaught(void) {
-  pid_t pid;
-  int status = 0;
-
-  fflush(NULL);
-  pid = fork();
-  CHECK(pid >= 0);
-  if (pid == 0) {
-    signal(SIGSEGV, nonreturning_old_handler);        /* saved as the old handler */
-    COFFEE_TRY() { } COFFEE_CATCH() { } COFFEE_END(); /* install, then drop the context */
-    CRASH();                                          /* no context: must chain */
-    _exit(0);                                         /* reached only if it did not */
-  }
-  alarm(20);
-  CHECK(waitpid(pid, &status, 0) == pid);
-  alarm(0);
-  CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 70);
-  return 0;
-}
-
 /* macOS doesn't have pthread_barrier_t; use pthread_cond_t to mimic it. */
 static pthread_mutex_t crash_mutex;
 static pthread_cond_t crash_cond;
@@ -363,6 +341,32 @@ static NOINLINE int test_no_context_dies(void) {
   CHECK(waitpid(pid, &status, 0) == pid);
   alarm(0);
   CHECK(WIFSIGNALED(status));
+  return 0;
+}
+
+/* The other half of the contract: with no catch context, a fault still chains to
+ * the old handler. A holder thread keeps coffeecatch installed so it is reached. */
+static NOINLINE int test_old_handler_runs_uncaught(void) {
+  pid_t pid;
+  int status = 0;
+
+  fflush(NULL);
+  pid = fork();
+  CHECK(pid >= 0);
+  if (pid == 0) {
+    pthread_t th;
+    signal(SIGSEGV, nonreturning_old_handler);   /* pre-existing: saved as the old handler */
+    pthread_create(&th, NULL, holder_body, NULL);
+    while (!holder_armed) {
+      usleep(1000);
+    }
+    CRASH();          /* no context on this thread: must chain to the old handler */
+    _exit(0);         /* reached only if it did not */
+  }
+  alarm(20);
+  CHECK(waitpid(pid, &status, 0) == pid);
+  alarm(0);
+  CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 70);
   return 0;
 }
 
