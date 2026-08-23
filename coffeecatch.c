@@ -229,8 +229,13 @@ typedef struct native_code_global_struct {
 
   /* Backup of sigaction. */
   struct sigaction *sa_old;
+
+  /* A caught signal armed alarm(). Process-wide, like alarm() itself, and
+     deliberately outliving the per-thread state so a cancel still works once
+     COFFEE_END() has released it. */
+  volatile sig_atomic_t alarm_pending;
 } native_code_global_struct;
-#define NATIVE_CODE_GLOBAL_INITIALIZER { 0, PTHREAD_MUTEX_INITIALIZER, NULL }
+#define NATIVE_CODE_GLOBAL_INITIALIZER { 0, PTHREAD_MUTEX_INITIALIZER, NULL, 0 }
 
 /* Thread-specific crash handler structure. */
 typedef struct native_code_handler_struct {
@@ -272,8 +277,6 @@ typedef struct native_code_handler_struct {
   const char *file;
   int line;
 
-  /* Alarm was fired. */
-  int alarm;
 } native_code_handler_struct;
 
 /* Global crash handler structure. */
@@ -498,8 +501,8 @@ static void coffeecatch_start_alarm(void) {
   (void) alarm(30);
 }
 
-static void coffeecatch_mark_alarm(native_code_handler_struct *const t) {
-  t->alarm = 1;
+static void coffeecatch_mark_alarm(void) {
+  native_code_g.alarm_pending = 1;
 }
 
 #ifdef USE_UNWIND
@@ -655,9 +658,8 @@ static native_code_handler_struct* coffeecatch_get() {
 }
 
 int coffeecatch_cancel_pending_alarm() {
-  native_code_handler_struct *const t = coffeecatch_get();
-  if (t != NULL && t->alarm) {
-    t->alarm = 0;
+  if (native_code_g.alarm_pending) {
+    native_code_g.alarm_pending = 0;
     /* "If seconds is 0, a pending alarm request, if any, is canceled." */
     alarm(0);
     return 0;
@@ -688,7 +690,7 @@ static void coffeecatch_signal_pass(const int code, siginfo_t *const si,
    * and only reaches us for a fault it declined, so re-entering it may abort. */
   t = coffeecatch_get();
   if (t != NULL) {
-    coffeecatch_mark_alarm(t);
+    coffeecatch_mark_alarm();
     coffeecatch_copy_context(t, code, si, sc);
     coffeecatch_try_jump_userland(t, code, si, sc);
   }
@@ -726,7 +728,7 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
   t = coffeecatch_get();
   if (t != NULL) {
     /* An alarm() call was triggered. */
-    coffeecatch_mark_alarm(t);
+    coffeecatch_mark_alarm();
 
     /* Take note (real "abort()") */
     coffeecatch_copy_context(t, code, si, sc);
