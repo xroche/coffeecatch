@@ -206,8 +206,35 @@ static NOINLINE int test_cancel_alarm_after_end(void) {
   return 0;
 }
 
-/* A cancel owed after COFFEE_END() must survive an unrelated session opening
- * and closing in between: one process-wide alarm(), one process-wide flag. */
+static volatile int holder_armed;
+
+static NOINLINE void *holder_body(void *arg) {
+  (void) arg;
+  COFFEE_TRY() {
+    holder_armed = 1;
+    for (;;) {
+      usleep(1000);
+    }
+  } COFFEE_CATCH() {
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  return NULL;
+}
+
+/* A caught signal arms a real timer, not just the flag. */
+static NOINLINE int test_alarm_is_armed(void) {
+  volatile int caught = 0;
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+  } COFFEE_END();
+  CHECK(caught);
+  CHECK(alarm(0) != 0);
+  return 0;
+}
+
+/* A cancel owed from before this session must still work after it. */
 static NOINLINE int test_cancel_alarm_after_other_session(void) {
   volatile int caught = 0, reached = 0;
   COFFEE_TRY() {
@@ -222,7 +249,32 @@ static NOINLINE int test_cancel_alarm_after_other_session(void) {
   } COFFEE_END();
   CHECK(reached);
   CHECK(coffeecatch_cancel_pending_alarm() == 0);
-  CHECK(alarm(0) == 0);   /* the watchdog is disarmed, not just the flag */
+  CHECK(alarm(0) == 0);
+  return 0;
+}
+
+/* Nor may a session opening on another thread clear it: that setup takes the
+ * nested branch, and this thread is still owed its cancel. */
+static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
+  pthread_t th;
+  volatile int caught = 0, started = 0, rc = -1;
+  holder_armed = 0;
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+    started = (pthread_create(&th, NULL, holder_body, NULL) == 0);
+    if (started) {
+      while (!holder_armed) {
+        usleep(1000);
+      }
+      rc = coffeecatch_cancel_pending_alarm();
+    }
+  } COFFEE_END();
+  CHECK(caught);
+  CHECK(started);
+  CHECK(rc == 0);
+  CHECK(alarm(0) == 0);
   return 0;
 }
 
@@ -337,21 +389,6 @@ static NOINLINE int test_threads(void) {
     CHECK(caught[i] == 1);
   }
   return 0;
-}
-
-static volatile int holder_armed;
-
-static NOINLINE void *holder_body(void *arg) {
-  (void) arg;
-  COFFEE_TRY() {
-    holder_armed = 1;
-    for (;;) {
-      usleep(1000);
-    }
-  } COFFEE_CATCH() {
-    coffeecatch_cancel_pending_alarm();
-  } COFFEE_END();
-  return NULL;
 }
 
 /* The give-up path: a crash with no catch context on this thread must still
@@ -562,7 +599,9 @@ static const struct test tests[] = {
   { "nested throws to outermost",   test_nested,      NULL },
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
   { "cancel_pending_alarm after END", test_cancel_alarm_after_end, NULL },
+  { "alarm is armed",               test_alarm_is_armed, NULL },
   { "cancel after other session",   test_cancel_alarm_after_other_session, NULL },
+  { "cancel with concurrent session", test_cancel_alarm_with_concurrent_session, NULL },
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
   { "old handler not called on recovery", test_old_handler_not_called_on_recovery, NULL },
   { "old handler non-returning",    test_old_handler_nonreturning, NULL },
