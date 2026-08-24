@@ -97,7 +97,7 @@ static NOINLINE int test_cxx_throw_inside_try(void) {
 /* Re-raising a signal as a C++ exception from COFFEE_CXX_CATCH() reaches the
  * enclosing catch. */
 static NOINLINE int test_cxx_throw_inside_catch(void) {
-  volatile int coffee_caught = 0, cxx_caught = 0;
+  volatile int coffee_caught = 0, cxx_caught = 0, rc = -1;
   try {
     COFFEE_CXX_TRY() {
       coffeecatch_abort("deliberate", __FILE__, __LINE__);
@@ -108,11 +108,16 @@ static NOINLINE int test_cxx_throw_inside_catch(void) {
     } COFFEE_CXX_END();
   } catch (int c) {
     cxx_caught = c;
-    coffeecatch_cancel_pending_alarm();
+    /* The recipe README.md documents: cancel here, where reaching the outer
+       catch proves the allocator the re-raise used was usable. The sentinel
+       already ran the cleanup, so this must not depend on per-thread state. */
+    rc = coffeecatch_cancel_pending_alarm();
   }
   CHECK(!coffeecatch_inside());
   CHECK(coffee_caught);
   CHECK(cxx_caught == SIGABRT);
+  CHECK(rc == 0);
+  CHECK(alarm(0) == 0);
   return 0;
 }
 

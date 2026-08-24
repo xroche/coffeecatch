@@ -190,6 +190,22 @@ static NOINLINE int test_cancel_alarm(void) {
   return 0;
 }
 
+/* The alarm is a process-wide timer, so cancelling it must still work once
+ * COFFEE_END() has released the per-thread state -- the point at which a caller
+ * that recovers and keeps running is finally clear of the allocator. */
+static NOINLINE int test_cancel_alarm_after_end(void) {
+  volatile int caught = 0;
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+  } COFFEE_END();
+  CHECK(caught);
+  CHECK(coffeecatch_cancel_pending_alarm() == 0);
+  CHECK(alarm(0) == 0);   /* the timer itself is disarmed, not just the flag */
+  return 0;
+}
+
 /* A pre-existing SIG_IGN must not be called back: SIG_IGN is the constant 1,
  * not a function. */
 static NOINLINE int test_old_handler_ignore(void) {
@@ -525,6 +541,7 @@ static const struct test tests[] = {
   { "reentry after catch",          test_reentry,     NULL },
   { "nested throws to outermost",   test_nested,      NULL },
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
+  { "cancel_pending_alarm after END", test_cancel_alarm_after_end, NULL },
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
   { "old handler not called on recovery", test_old_handler_not_called_on_recovery, NULL },
   { "old handler non-returning",    test_old_handler_nonreturning, NULL },

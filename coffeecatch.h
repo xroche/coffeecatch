@@ -203,6 +203,8 @@ extern void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
  * Calling this function is dangerous, because it exposes the process to
  * a possible deadlock if the signal was caught due to internal low-level
  * library error (mutex being in a locked state, for example).
+ * Returns 0 if an alarm was pending and is now cancelled, -1 otherwise. The
+ * pending state is process-wide, so a call after COFFEE_END() still cancels.
  */
 extern int coffeecatch_cancel_pending_alarm(void);
 
