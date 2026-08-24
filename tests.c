@@ -206,6 +206,26 @@ static NOINLINE int test_cancel_alarm_after_end(void) {
   return 0;
 }
 
+/* A cancel owed after COFFEE_END() must survive an unrelated session opening
+ * and closing in between: one process-wide alarm(), one process-wide flag. */
+static NOINLINE int test_cancel_alarm_after_other_session(void) {
+  volatile int caught = 0, reached = 0;
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+  } COFFEE_END();
+  CHECK(caught);
+  COFFEE_TRY() {
+    reached = 1;
+  } COFFEE_CATCH() {
+  } COFFEE_END();
+  CHECK(reached);
+  CHECK(coffeecatch_cancel_pending_alarm() == 0);
+  CHECK(alarm(0) == 0);   /* the watchdog is disarmed, not just the flag */
+  return 0;
+}
+
 /* A pre-existing SIG_IGN must not be called back: SIG_IGN is the constant 1,
  * not a function. */
 static NOINLINE int test_old_handler_ignore(void) {
@@ -542,6 +562,7 @@ static const struct test tests[] = {
   { "nested throws to outermost",   test_nested,      NULL },
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
   { "cancel_pending_alarm after END", test_cancel_alarm_after_end, NULL },
+  { "cancel after other session",   test_cancel_alarm_after_other_session, NULL },
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
   { "old handler not called on recovery", test_old_handler_not_called_on_recovery, NULL },
   { "old handler non-returning",    test_old_handler_nonreturning, NULL },

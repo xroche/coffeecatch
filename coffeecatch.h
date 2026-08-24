@@ -205,6 +205,8 @@ extern void coffeecatch_get_backtrace_info(void (*fun)(void *arg,
  * library error (mutex being in a locked state, for example).
  * Returns 0 if an alarm was pending and is now cancelled, -1 otherwise. The
  * pending state is process-wide, so a call after COFFEE_END() still cancels.
+ * A process has one alarm(): arming your own over an uncancelled watchdog
+ * replaces it, and this call then cancels yours.
  */
 extern int coffeecatch_cancel_pending_alarm(void);
 
@@ -244,9 +246,10 @@ public:
  *
  * Caveat: signal recovery uses siglongjmp(), which does not unwind the C++
  * frames between COFFEE_CXX_TRY() and the fault, so their destructors are
- * skipped (undefined behavior if non-trivial; see [support.runtime]). The
- * armed alarm() is still pending. Treat the catch block as last rites: log,
- * then exit. See README.md for the full rationale.
+ * skipped (undefined behavior if non-trivial; see [support.runtime]). Treat
+ * the catch block as last rites: log, then exit. The armed alarm() outlives
+ * the block. Cancel it from the outer catch, not before a re-throw; see
+ * README.md for the full rationale.
  */
 /* __LINE__-paste the sentinel name so nested blocks do not shadow each other
  * (an embedder building with -Wshadow would otherwise reject the nesting). */
