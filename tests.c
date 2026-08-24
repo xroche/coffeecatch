@@ -221,16 +221,24 @@ static NOINLINE void *holder_body(void *arg) {
   return NULL;
 }
 
-/* A caught signal arms a real timer, not just the flag. */
+/* A caught signal, and only a caught signal, arms a real timer. */
 static NOINLINE int test_alarm_is_armed(void) {
-  volatile int caught = 0;
+  volatile int caught = 0, reached = 0;
+  volatile unsigned int left = 0;
+  COFFEE_TRY() {
+    reached = 1;
+  } COFFEE_CATCH() {
+  } COFFEE_END();
+  CHECK(reached);
+  CHECK(alarm(0) == 0);
   COFFEE_TRY() {
     CRASH();
   } COFFEE_CATCH() {
     caught = 1;
   } COFFEE_END();
   CHECK(caught);
-  CHECK(alarm(0) != 0);
+  left = alarm(0);
+  CHECK(left >= 20);   /* a usable grace, not a token timer */
   return 0;
 }
 
@@ -249,6 +257,7 @@ static NOINLINE int test_cancel_alarm_after_other_session(void) {
   } COFFEE_END();
   CHECK(reached);
   CHECK(coffeecatch_cancel_pending_alarm() == 0);
+  CHECK(coffeecatch_cancel_pending_alarm() == -1);   /* nothing left to cancel */
   CHECK(alarm(0) == 0);
   return 0;
 }
@@ -257,7 +266,7 @@ static NOINLINE int test_cancel_alarm_after_other_session(void) {
  * nested branch, and this thread is still owed its cancel. */
 static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
   pthread_t th;
-  volatile int caught = 0, started = 0, rc = -1;
+  volatile int caught = 0, started = 0, rc = -1, waited = 0;
   holder_armed = 0;
   COFFEE_TRY() {
     CRASH();
@@ -265,7 +274,7 @@ static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
     caught = 1;
     started = (pthread_create(&th, NULL, holder_body, NULL) == 0);
     if (started) {
-      while (!holder_armed) {
+      while (!holder_armed && waited++ < 5000) {
         usleep(1000);
       }
       rc = coffeecatch_cancel_pending_alarm();
@@ -273,6 +282,7 @@ static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
   } COFFEE_END();
   CHECK(caught);
   CHECK(started);
+  CHECK(holder_armed);
   CHECK(rc == 0);
   CHECK(alarm(0) == 0);
   return 0;
