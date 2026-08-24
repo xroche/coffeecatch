@@ -206,6 +206,88 @@ static NOINLINE int test_cancel_alarm_after_end(void) {
   return 0;
 }
 
+static volatile int holder_armed;
+
+static NOINLINE void *holder_body(void *arg) {
+  (void) arg;
+  COFFEE_TRY() {
+    holder_armed = 1;
+    for (;;) {
+      usleep(1000);
+    }
+  } COFFEE_CATCH() {
+    coffeecatch_cancel_pending_alarm();
+  } COFFEE_END();
+  return NULL;
+}
+
+/* A caught signal, and only a caught signal, arms a real timer. */
+static NOINLINE int test_alarm_is_armed(void) {
+  volatile int caught = 0, reached = 0;
+  volatile unsigned int left = 0;
+  COFFEE_TRY() {
+    reached = 1;
+  } COFFEE_CATCH() {
+  } COFFEE_END();
+  CHECK(reached);
+  CHECK(alarm(0) == 0);
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+  } COFFEE_END();
+  CHECK(caught);
+  left = alarm(0);
+  CHECK(left >= 20);   /* a usable grace, not a token timer */
+  return 0;
+}
+
+/* A cancel owed from before this session must still work after it. */
+static NOINLINE int test_cancel_alarm_after_other_session(void) {
+  volatile int caught = 0, reached = 0;
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+  } COFFEE_END();
+  CHECK(caught);
+  COFFEE_TRY() {
+    reached = 1;
+  } COFFEE_CATCH() {
+  } COFFEE_END();
+  CHECK(reached);
+  CHECK(coffeecatch_cancel_pending_alarm() == 0);
+  CHECK(coffeecatch_cancel_pending_alarm() == -1);   /* nothing left to cancel */
+  CHECK(alarm(0) == 0);
+  return 0;
+}
+
+/* Nor may a session opening on another thread clear it: that setup takes the
+ * nested branch, and this thread is still owed its cancel. */
+static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
+  pthread_t th;
+  volatile int caught = 0, started = 0, rc = -1, waited = 0;
+  holder_armed = 0;
+  COFFEE_TRY() {
+    CRASH();
+  } COFFEE_CATCH() {
+    caught = 1;
+    started = (pthread_create(&th, NULL, holder_body, NULL) == 0);
+    if (started) {
+      while (!holder_armed && waited++ < 5000) {
+        usleep(1000);
+      }
+      rc = coffeecatch_cancel_pending_alarm();
+    }
+  } COFFEE_END();
+  CHECK(caught);
+  CHECK(started);
+  CHECK(holder_armed);
+  CHECK(rc == 0);
+  CHECK(alarm(0) == 0);
+  return 0;
+}
+
 /* A pre-existing SIG_IGN must not be called back: SIG_IGN is the constant 1,
  * not a function. */
 static NOINLINE int test_old_handler_ignore(void) {
@@ -317,21 +399,6 @@ static NOINLINE int test_threads(void) {
     CHECK(caught[i] == 1);
   }
   return 0;
-}
-
-static volatile int holder_armed;
-
-static NOINLINE void *holder_body(void *arg) {
-  (void) arg;
-  COFFEE_TRY() {
-    holder_armed = 1;
-    for (;;) {
-      usleep(1000);
-    }
-  } COFFEE_CATCH() {
-    coffeecatch_cancel_pending_alarm();
-  } COFFEE_END();
-  return NULL;
 }
 
 /* The give-up path: a crash with no catch context on this thread must still
@@ -542,6 +609,9 @@ static const struct test tests[] = {
   { "nested throws to outermost",   test_nested,      NULL },
   { "cancel_pending_alarm",         test_cancel_alarm, NULL },
   { "cancel_pending_alarm after END", test_cancel_alarm_after_end, NULL },
+  { "alarm is armed",               test_alarm_is_armed, NULL },
+  { "cancel after other session",   test_cancel_alarm_after_other_session, NULL },
+  { "cancel with concurrent session", test_cancel_alarm_with_concurrent_session, NULL },
   { "old handler SIG_IGN",          test_old_handler_ignore, NULL },
   { "old handler not called on recovery", test_old_handler_not_called_on_recovery, NULL },
   { "old handler non-returning",    test_old_handler_nonreturning, NULL },
