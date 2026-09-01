@@ -32,7 +32,7 @@ jobs:
           - { arch: arm64,  runner: ubuntu-24.04-arm, cc: gcc,   cxx: g++ }
           - { arch: arm64,  runner: ubuntu-24.04-arm, cc: clang, cxx: clang++ }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install toolchain
         run: |
@@ -50,7 +50,7 @@ jobs:
     name: build+test (x86-64, gcc, USE_UNWIND)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install toolchain
         run: |
@@ -68,7 +68,7 @@ jobs:
     name: sanitizer (ubsan, gcc)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install toolchain
         run: |
@@ -103,7 +103,7 @@ jobs:
           - { arch: arm64,  runner: macos-latest }
           - { arch: x86-64, runner: macos-26-intel }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The Makefile is portable (it switches to a .dylib link on Darwin), and
       # the tests link the static archive, so macOS runs the same
