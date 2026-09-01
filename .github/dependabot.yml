@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # The action pins only rot manually otherwise.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
