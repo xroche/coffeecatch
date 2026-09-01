@@ -6,7 +6,7 @@ name: Dependabot auto-merge
 on: pull_request_target
 
 concurrency:
-  # Keyed per PR, because github.ref is the base branch here and would hold every PR in one group.
+  # github.ref is the base branch on pull_request_target, so one group would hold every PR.
   group: dependabot-automerge-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
@@ -19,7 +19,8 @@ permissions:
 jobs:
   automerge:
     name: Arm auto-merge
-    # The PR's author, not github.actor, which on a synchronize is whoever pushed the update.
+    # github.actor on a synchronize is whoever pushed, so the guard reads the PR's author.
+    # The head-repo clause adds nothing today, and it keeps fork PRs out if that check loosens.
     if: >-
       github.repository == 'xroche/coffeecatch'
       && github.event.pull_request.user.login == 'dependabot[bot]'
