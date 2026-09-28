@@ -121,7 +121,7 @@ push will show no checks until someone approves them.
 
 - `coffeejni.c` needs `<jni.h>`, so only `make check-jni` builds it. That test
   runs it against a fake `JNIEnv` on the `USE_UNWIND` leg, not in a JVM or with
-  the NDK, so validate an Android change against the NDK separately.
+  the NDK. Validate an Android change against the NDK separately.
 - This is Android-first code. Green CI on Linux is a real but partial signal:
   symbolication and the Bionic `ucontext`/`sigcontext` quirks are exactly what
   every non-Android leg skips.

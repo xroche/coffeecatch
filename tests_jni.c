@@ -11,6 +11,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
@@ -19,8 +20,10 @@
 #include "coffeecatch.h"
 #include "coffeejni.h"
 
+/* COFFEE_TRY requires its enclosing function to be non-inlined. */
 #define NOINLINE __attribute__ ((noinline))
 
+/* Only valid outside a TRY/CATCH block. */
 #define CHECK(cond)                                                     \
   do {                                                                  \
     if (!(cond)) {                                                      \
@@ -43,24 +46,28 @@ typedef struct ref {
 
 static ref refs[1024];
 static size_t nrefs;
-static int live, bad_refs;
+static int live_refs, jni_errors;
 static ref *thrown;
+
+static const char ste_ctor[] =
+  "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V";
+static const char set_stack_trace[] = "([Ljava/lang/StackTraceElement;)V";
 
 static ref *new_ref(void) {
   if (nrefs == sizeof(refs) / sizeof(refs[0])) {
-    bad_refs++;
-    return NULL;
+    fprintf(stderr, "    out of fake local refs\n");
+    exit(1);
   }
   refs[nrefs].live = 1;
-  live++;
+  live_refs++;
   return &refs[nrefs++];
 }
 
-/* Any use of a deleted or foreign ref counts as a bad ref. */
+/* A NULL, deleted or foreign ref is a JNI error. */
 static ref *use(void *p) {
   ref *const r = (ref*) p;
   if (r == NULL || r < refs || r >= refs + nrefs || !r->live) {
-    bad_refs++;
+    jni_errors++;
     return NULL;
   }
   return r;
@@ -82,9 +89,7 @@ static jclass fake_FindClass(JNIEnv *env, const char *name) {
 static jstring fake_NewStringUTF(JNIEnv *env, const char *s) {
   ref *const r = new_ref();
   (void) env;
-  if (r != NULL) {
-    snprintf(r->text, sizeof(r->text), "%s", s);
-  }
+  snprintf(r->text, sizeof(r->text), "%s", s);
   return (jstring) r;
 }
 
@@ -94,9 +99,6 @@ static jobject fake_NewObject(JNIEnv *env, jclass cls, jmethodID m, ...) {
   va_list ap;
   (void) env;
   use(cls);
-  if (r == NULL) {
-    return NULL;
-  }
   r->sig = sig;
   va_start(ap, m);
   r->args[0] = use(va_arg(ap, jobject));
@@ -112,18 +114,18 @@ static jobjectArray fake_NewObjectArray(JNIEnv *env, jsize length, jclass cls,
   ref *const r = new_ref();
   (void) env; (void) init;
   use(cls);
-  if (r != NULL) {
-    r->length = length;
-  }
+  r->length = length;
   return (jobjectArray) r;
 }
 
 static void fake_SetObjectArrayElement(JNIEnv *env, jobjectArray array,
                                        jsize index, jobject value) {
   ref *const a = use(array);
+  const ref *const v = use(value);
   (void) env;
-  use(value);
-  if (a != NULL && index >= 0 && index < a->length) {
+  if (v == NULL || v->sig == NULL || strcmp(v->sig, ste_ctor) != 0) {
+    jni_errors++;
+  } else if (a != NULL && index >= 0 && index < a->length) {
     a->stored++;
   }
 }
@@ -131,7 +133,10 @@ static void fake_SetObjectArrayElement(JNIEnv *env, jobjectArray array,
 static void fake_CallVoidMethod(JNIEnv *env, jobject obj, jmethodID m, ...) {
   ref *const r = use(obj);
   va_list ap;
-  (void) env; (void) m;
+  (void) env;
+  if (strcmp((const char*) m, set_stack_trace) != 0) {
+    jni_errors++;
+  }
   va_start(ap, m);
   if (r != NULL) {
     r->trace = use(va_arg(ap, jobject));
@@ -147,7 +152,7 @@ static jint fake_Throw(JNIEnv *env, jthrowable obj) {
 
 static jint fake_ThrowNew(JNIEnv *env, jclass cls, const char *msg) {
   (void) env; (void) cls; (void) msg;
-  bad_refs++;  /* only reached when NewObject fails, which it never does here */
+  jni_errors++;
   return 0;
 }
 
@@ -156,7 +161,7 @@ static void fake_DeleteLocalRef(JNIEnv *env, jobject obj) {
   (void) env;
   if (r != NULL) {
     r->live = 0;
-    live--;
+    live_refs--;
   }
 }
 
@@ -169,16 +174,17 @@ static NOINLINE void crash(void) {
   *(volatile int *) bad_addr = 1;
 }
 
-/* One catch, as COFFEE_TRY_JNI runs it inside a native method. */
+/* A JNI native method that crashes once. */
 static NOINLINE void native_method(void) {
   COFFEE_TRY_JNI(&env, crash());
-  coffeecatch_cancel_pending_alarm();
+  coffeecatch_cancel_pending_alarm();  /* the process lives on after a catch */
 }
 
 static int check_thrown(void) {
   CHECK(thrown != NULL);
   CHECK(thrown->args[0] != NULL);
   CHECK(strncmp(thrown->args[0]->text, "signal ", 7) == 0);
+/* Only these builds record a backtrace. */
 #if defined(__ANDROID__) || defined(__APPLE__) || defined(USE_UNWIND)
   {
     /* Error(message, cause), where cause carries the native stack trace. */
@@ -205,15 +211,15 @@ int main(void) {
   functions.ThrowNew = fake_ThrowNew;
   functions.DeleteLocalRef = fake_DeleteLocalRef;
 
-  /* Several catches within one native call, with no return to Java between. */
+  /* Local refs pile up across catches until the native call returns. */
   for (i = 0; i < 3; i++) {
     thrown = NULL;
     native_method();
     if (check_thrown() != 0) {
       return 1;
     }
-    CHECK(bad_refs == 0);
+    CHECK(jni_errors == 0);
   }
-  printf("jni: 3 catches, %d local refs left\n", live);
+  printf("jni: %d local refs left\n", live_refs);
   return 0;
 }
