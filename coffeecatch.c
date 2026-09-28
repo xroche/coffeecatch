@@ -248,6 +248,7 @@ typedef struct native_code_handler_struct {
   char *stack_buffer;
   size_t stack_buffer_size;
   stack_t stack_old;
+  int stack_installed;
 
   /* Signal code and info. */
   int code;
@@ -825,6 +826,14 @@ static int coffeecatch_handler_setup_global(void) {
 /**
  * Free a native_code_handler_struct structure.
  **/
+#ifdef COFFEE_TESTING
+/* Test seam: when nonzero, restoring the previous alternative stack fails. */
+int coffeecatch_test_force_altstack_failure = 0;
+#define COFFEE_TEST_ALTSTACK_FAILURE coffeecatch_test_force_altstack_failure
+#else
+#define COFFEE_TEST_ALTSTACK_FAILURE 0
+#endif
+
 static int coffeecatch_native_code_handler_struct_free(native_code_handler_struct *const t) {
   int code = 0;
 
@@ -833,8 +842,16 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
   }
 
 #ifndef NO_USE_SIGALTSTACK
-  /* Restore previous alternative stack. */
-  if (t->stack_old.ss_sp != NULL && sigaltstack(&t->stack_old, NULL) != 0) {
+  /* Restore the previous alternative stack, even when it was disabled. macOS
+     rejects a disabled stack smaller than MINSIGSTKSZ, so lend ours the size. */
+  if (t->stack_installed && (t->stack_old.ss_flags & SS_DISABLE) != 0) {
+    t->stack_old.ss_sp = t->stack_buffer;
+    t->stack_old.ss_size = t->stack_buffer_size;
+  }
+  if (t->stack_installed
+      && (COFFEE_TEST_ALTSTACK_FAILURE
+          || sigaltstack(&t->stack_old, NULL) != 0)) {
+    t->stack_buffer = NULL;  /* leak it, because the kernel still uses it */
 #ifndef USE_SILENT_SIGALTSTACK
     code = -1;
 #endif
@@ -896,7 +913,9 @@ static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(v
 
 #ifndef NO_USE_SIGALTSTACK
   /* Install alternative stack. This is thread-safe */
-  if (sigaltstack(&stack, &t->stack_old) != 0) {
+  if (sigaltstack(&stack, &t->stack_old) == 0) {
+    t->stack_installed = 1;
+  } else {
 #ifndef USE_SILENT_SIGALTSTACK
     coffeecatch_native_code_handler_struct_free(t);
     return NULL;
@@ -980,9 +999,10 @@ static int coffeecatch_handler_cleanup() {
       assert(! "pthread_setspecific() failed");
     }
 
-    /* Free handler and reset slternate stack */
+    /* Free handler and reset alternate stack, then drop the global refcount
+       whatever the outcome. */
     if (coffeecatch_native_code_handler_struct_free(t) != 0) {
-      return -1;
+      code = -1;
     }
 
     DEBUG(print("removed thread alternative stack\n"));
