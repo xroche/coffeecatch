@@ -47,6 +47,12 @@
 static volatile uintptr_t bad_addr = 0x100;
 #define CRASH() (*(volatile int *) bad_addr = 1)
 
+/* Keep clang's UBSan from catching the SIGSEGV the uncaught-crash test expects. */
+const char *__ubsan_default_options(void);
+const char *__ubsan_default_options(void) {
+  return "handle_segv=0";
+}
+
 /* --- individual cases: return 0 on success, 1 on failure ----------------- */
 
 static NOINLINE int test_segv(void) {
