@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include "coffeecatch.h"
@@ -493,6 +494,40 @@ static NOINLINE int test_errno_message(void) {
   return 0;
 }
 
+static volatile int overflow_sink, overflow_limit = 1 << 30;
+static NOINLINE int overflow(int depth) {
+  volatile char frame[1024];
+  frame[depth % sizeof(frame)] = (char) depth;
+  if (depth == overflow_limit) {  /* the stack runs out long before this */
+    return 0;
+  }
+  return overflow(depth + 1) + frame[0] + overflow_sink;
+}
+
+/* Two overflows in a row are both caught, so the first catch left the alternate
+ * stack usable. A failed setup lands in the catch block, so count faults only. */
+static NOINLINE int test_stack_overflow_twice(void) {
+  volatile int caught = 0, i;
+  struct rlimit stack;
+  const rlim_t cap = 8 << 20;  /* keeps "ulimit -s unlimited" from eating memory */
+  CHECK(getrlimit(RLIMIT_STACK, &stack) == 0);
+  if (stack.rlim_cur == RLIM_INFINITY || stack.rlim_cur > cap) {
+    stack.rlim_cur = cap;
+    CHECK(setrlimit(RLIMIT_STACK, &stack) == 0);
+  }
+  for (i = 0; i < 2; i++) {
+    COFFEE_TRY() {
+      overflow_sink = overflow(0);
+    } COFFEE_CATCH() {
+      const int sig = coffeecatch_get_signal();
+      caught += sig == SIGSEGV || sig == SIGBUS;
+      coffeecatch_cancel_pending_alarm();
+    } COFFEE_END();
+  }
+  CHECK(caught == 2);
+  return 0;
+}
+
 /* COFFEE_END() (== coffeecatch_cleanup) fires even when coffeecatch_setup()
  * failed: no per-thread context exists, so t is NULL. Pre-#57 this NULL-derefs. */
 static NOINLINE int test_cleanup_no_setup(void) {
@@ -756,6 +791,7 @@ static const struct test tests[] = {
   { "no context: crash still kills", test_no_context_dies, NULL },
   { "si_errno in message",          test_errno_message, NULL },
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
+  { "stack overflow, twice",        test_stack_overflow_twice, NULL },
   { "global setup failure rolls back", test_global_setup_failure_rolls_back, NULL },
   { "cleanup restores altstack",    test_cleanup_restores_altstack, NULL },
   { "thread exit releases session", test_thread_exit_releases_session, NULL },
