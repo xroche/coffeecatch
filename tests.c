@@ -598,6 +598,34 @@ static NOINLINE int test_global_setup_failure_rolls_back(void) {
   return 0;
 }
 
+static void *exit_inside_session(void *arg) {
+  (void) arg;
+  if (coffeecatch_setup() == 0) {
+    pthread_exit((void*) 1);  /* skip COFFEE_END(), as cancellation would */
+  }
+  return NULL;
+}
+
+#ifdef COFFEE_TESTING
+extern int coffeecatch_test_live_structs;
+#endif
+
+/* A thread that exits inside a session still releases its hold on the
+ * handlers, so they come off once no session is left. */
+static NOINLINE int test_thread_exit_releases_session(void) {
+  pthread_t thread;
+  void *in_session = NULL;
+  CHECK(install_plain_handler_everywhere());
+  CHECK(pthread_create(&thread, NULL, exit_inside_session, NULL) == 0);
+  CHECK(pthread_join(thread, &in_session) == 0);
+  CHECK(in_session == (void*) 1);
+  CHECK(plain_handler_everywhere());
+#ifdef COFFEE_TESTING
+  CHECK(coffeecatch_test_live_structs == 0);
+#endif
+  return 0;
+}
+
 /* Does the thread's alternate stack match a snapshot taken earlier? */
 static int same_altstack(const stack_t *before) {
   stack_t now;
@@ -766,6 +794,7 @@ static const struct test tests[] = {
   { "stack overflow, twice",        test_stack_overflow_twice, NULL },
   { "global setup failure rolls back", test_global_setup_failure_rolls_back, NULL },
   { "cleanup restores altstack",    test_cleanup_restores_altstack, NULL },
+  { "thread exit releases session", test_thread_exit_releases_session, NULL },
 #ifdef COFFEE_TESTING
   { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
   { "altstack failure still cleans up", test_altstack_failure_still_cleans_up, NULL },

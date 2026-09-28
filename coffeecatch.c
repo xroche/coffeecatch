@@ -755,6 +755,8 @@ static int coffeecatch_restore_handlers(size_t count) {
   return ok;
 }
 
+static void coffeecatch_thread_exit(void *arg);
+
 /* Internal globals initialization. */
 static int coffeecatch_handler_setup_global(void) {
   if (native_code_g.initialized == 0) {
@@ -794,7 +796,7 @@ static int coffeecatch_handler_setup_global(void) {
     }
 
     /* Initialize thread var. */
-    if (pthread_key_create(&native_code_thread, NULL) != 0) {
+    if (pthread_key_create(&native_code_thread, coffeecatch_thread_exit) != 0) {
       coffeecatch_restore_handlers(i);  /* i counts every installed signal */
       return -1;
     }
@@ -812,6 +814,14 @@ static int coffeecatch_handler_setup_global(void) {
 /**
  * Free a native_code_handler_struct structure.
  **/
+#ifdef COFFEE_TESTING
+/* Test seam: how many per-thread structures are allocated right now. */
+int coffeecatch_test_live_structs = 0;
+#define COFFEE_TEST_LIVE_STRUCTS(N) (coffeecatch_test_live_structs += (N))
+#else
+#define COFFEE_TEST_LIVE_STRUCTS(N) ((void) 0)
+#endif
+
 #ifdef COFFEE_TESTING
 /* Test seam: when nonzero, restoring the previous alternative stack fails. */
 int coffeecatch_test_force_altstack_failure = 0;
@@ -853,6 +863,7 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
 
   /* Free structure. */
   free(t);
+  COFFEE_TEST_LIVE_STRUCTS(-1);
 
   return code;
 }
@@ -880,6 +891,7 @@ static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(v
   if (t == NULL) {
     return NULL;
   }
+  COFFEE_TEST_LIVE_STRUCTS(+1);
 
   DEBUG(print("installing thread alternative stack\n"));
 
@@ -966,6 +978,33 @@ static int coffeecatch_handler_setup(int setup_thread) {
   return 0;
 }
 
+/* Drop one global refcount, uninstalling the handlers with the last one.
+   Returns whether every handler was restored. */
+static int coffeecatch_release_global(void) {
+  int ok = 1;
+  if (pthread_mutex_lock(&native_code_g.mutex) != 0) {
+    assert(! "pthread_mutex_lock() failed");
+  }
+  assert(native_code_g.initialized != 0);
+  if (--native_code_g.initialized == 0) {
+    DEBUG(print("removing global signal handlers\n"));
+
+    /* A failed restore must still reach the unlock below. */
+    ok = coffeecatch_restore_handlers(SIG_CATCH_COUNT);
+
+    /* Delete thread var. */
+    if (pthread_key_delete(native_code_thread) != 0) {
+      assert(! "pthread_key_delete() failed");
+    }
+
+    DEBUG(print("removed global signal handlers\n"));
+  }
+  if (pthread_mutex_unlock(&native_code_g.mutex) != 0) {
+    assert(! "pthread_mutex_unlock() failed");
+  }
+  return ok;
+}
+
 /**
  * Release the resources allocated by a previous call to
  * coffeecatch_handler_setup().
@@ -994,31 +1033,18 @@ static int coffeecatch_handler_cleanup() {
     DEBUG(print("removed thread alternative stack\n"));
   }
 
-  /* Cleanup globals. */
-  if (pthread_mutex_lock(&native_code_g.mutex) != 0) {
-    assert(! "pthread_mutex_lock() failed");
-  }
-  assert(native_code_g.initialized != 0);
-  if (--native_code_g.initialized == 0) {
-    DEBUG(print("removing global signal handlers\n"));
-
-    /* A failed restore must still reach the unlock below. */
-    if (!coffeecatch_restore_handlers(SIG_CATCH_COUNT)) {
-      code = -1;
-    }
-
-    /* Delete thread var. */
-    if (pthread_key_delete(native_code_thread) != 0) {
-      assert(! "pthread_key_delete() failed");
-    }
-
-    DEBUG(print("removed global signal handlers\n"));
-  }
-  if (pthread_mutex_unlock(&native_code_g.mutex) != 0) {
-    assert(! "pthread_mutex_unlock() failed");
+  if (!coffeecatch_release_global()) {
+    code = -1;
   }
 
   return code;
+}
+
+/* Frees the state and refcount of a thread that exits inside a session. */
+static void coffeecatch_thread_exit(void *arg) {
+  (void) coffeecatch_native_code_handler_struct_free(
+      (native_code_handler_struct*) arg);
+  (void) coffeecatch_release_global();
 }
 
 /**
