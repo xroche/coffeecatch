@@ -100,6 +100,31 @@ jobs:
             CFLAGS="-O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
             LDFLAGS="-fsanitize=undefined"
 
+  tsan:
+    name: sanitizer (tsan, clang)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang
+
+      # TSan, unlike ASan, leaves coffeecatch's handlers and alternate stack
+      # working, so the whole suite runs. It checks the session refcount and the
+      # alarm flag that threads share with the signal handler.
+      - name: Build and run under TSan
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          make check CC=clang CXX=clang++ \
+            CFLAGS="-O1 -g -fsanitize=thread" \
+            CXXFLAGS="-O1 -g -fsanitize=thread" \
+            LDFLAGS="-fsanitize=thread"
+
   macos:
     name: build+test (macOS ${{ matrix.arch }}, clang)
     runs-on: ${{ matrix.runner }}
