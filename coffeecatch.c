@@ -846,7 +846,7 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
   if (t->stack_installed
       && (COFFEE_TEST_ALTSTACK_FAILURE
           || sigaltstack(&t->stack_old, NULL) != 0)) {
-    t->stack_buffer = NULL;  /* the kernel still uses it: leak, never free */
+    t->stack_buffer = NULL;  /* leak it, because the kernel still uses it */
 #ifndef USE_SILENT_SIGALTSTACK
     code = -1;
 #endif
