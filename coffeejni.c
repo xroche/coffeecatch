@@ -50,20 +50,19 @@ typedef struct t_bt_fun {
   size_t index;
 } t_bt_fun;
 
-static char* bt_print(const char *function, uintptr_t offset) {
+static const char* bt_print(char *buffer, size_t size,
+                            const char *function, uintptr_t offset) {
   if (function != NULL) {
-    char buffer[256];
-    snprintf(buffer, sizeof(buffer), "%s:%p", function, (void*) offset);
-    return strdup(buffer);
+    snprintf(buffer, size, "%s:%p", function, (void*) offset);
+    return buffer;
   } else {
     return "<unknown>";
   }
 }
 
-static char* bt_addr(uintptr_t addr) {
-  char buffer[32];
-  snprintf(buffer, sizeof(buffer), "%p", (void*) addr);
-  return strdup(buffer);
+static const char* bt_addr(char *buffer, size_t size, uintptr_t addr) {
+  snprintf(buffer, size, "%p", (void*) addr);
+  return buffer;
 }
 
 #define IS_VALID_CLASS_CHAR(C) ( \
@@ -73,23 +72,22 @@ static char* bt_addr(uintptr_t addr) {
   || (C) == '_'                  \
   )
 
-static char* bt_module(const char *module) {
+static const char* bt_module(char *buffer, size_t size, const char *module) {
   if (module != NULL) {
     size_t i;
-    char *copy;
     if (*module == '/') {
       module++;
     }
-    copy = strdup(module);
+    snprintf(buffer, size, "%s", module);
     /* Pseudo-java-class. */
-    for(i = 0; copy[i] != '\0'; i++) {
-      if (copy[i] == '/') {
-        copy[i] = '.';
-      } else if (!IS_VALID_CLASS_CHAR(copy[i])) {
-        copy[i] = '_';
+    for(i = 0; buffer[i] != '\0'; i++) {
+      if (buffer[i] == '/') {
+        buffer[i] = '.';
+      } else if (!IS_VALID_CLASS_CHAR(buffer[i])) {
+        buffer[i] = '_';
       }
     }
-    return copy;
+    return buffer;
   } else {
     return "<unknown>";
   }
@@ -99,9 +97,13 @@ static void bt_fun(void *arg, const char *module, uintptr_t addr,
                    const char *function, uintptr_t offset) {
   t_bt_fun *const t = (t_bt_fun*) arg;
   JNIEnv*const env = t->env;
-  jstring declaringClass = (*env)->NewStringUTF(env, bt_module(module));
-  jstring methodName = (*env)->NewStringUTF(env, bt_addr(addr));
-  jstring fileName = (*env)->NewStringUTF(env, bt_print(function, offset));
+  char module_buf[1024], addr_buf[32], print_buf[256];
+  jstring declaringClass = (*env)->NewStringUTF(env,
+    bt_module(module_buf, sizeof(module_buf), module));
+  jstring methodName = (*env)->NewStringUTF(env,
+    bt_addr(addr_buf, sizeof(addr_buf), addr));
+  jstring fileName = (*env)->NewStringUTF(env,
+    bt_print(print_buf, sizeof(print_buf), function, offset));
   const int lineNumber = function != NULL ? 0 : -2;  /* "-2" is "inside JNI code" */
   jobject trace = (*env)->NewObject(env, t->cls_ste, t->cons_ste, 
                                     declaringClass, methodName, fileName,
@@ -109,6 +111,11 @@ static void bt_fun(void *arg, const char *module, uintptr_t addr,
   if (t->index < t->size) {
     (*t->env)->SetObjectArrayElement(t->env, t->elements, t->index++, trace);
   }
+  /* Runs once per frame within one native call, so release locals now. */
+  (*env)->DeleteLocalRef(env, trace);
+  (*env)->DeleteLocalRef(env, fileName);
+  (*env)->DeleteLocalRef(env, methodName);
+  (*env)->DeleteLocalRef(env, declaringClass);
 }
 
 void coffeecatch_throw_exception(JNIEnv* env) {
@@ -124,7 +131,7 @@ void coffeecatch_throw_exception(JNIEnv* env) {
 
   /* Exception message. */
   const char*const message = coffeecatch_get_message();
-  jstring str = (*env)->NewStringUTF(env, strdup(message));
+  jstring str = (*env)->NewStringUTF(env, message);
 
   /* Final exception. */
   jthrowable exception;
@@ -161,10 +168,12 @@ void coffeecatch_throw_exception(JNIEnv* env) {
       t.size = bt_size;
       coffeecatch_get_backtrace_info(bt_fun, &t);
       (*env)->CallVoidMethod(env, cause, meth_sste, elements);
+      (*env)->DeleteLocalRef(env, elements);
     }
 
     /* Primary exception */
     exception = (jthrowable) (*env)->NewObject(env, cls, cons_cause, str, cause);
+    (*env)->DeleteLocalRef(env, cause);
   } else {
     /* Simple exception */
     exception = (jthrowable) (*env)->NewObject(env, cls, cons, str);
@@ -174,8 +183,14 @@ void coffeecatch_throw_exception(JNIEnv* env) {
   if (exception != NULL) {
     (*env)->Throw(env, exception);
   } else {
-    (*env)->ThrowNew(env, cls, strdup(message));
+    (*env)->ThrowNew(env, cls, message);
   }
+
+  /* The caller may catch again before returning to Java, so release locals. */
+  (*env)->DeleteLocalRef(env, exception);
+  (*env)->DeleteLocalRef(env, str);
+  (*env)->DeleteLocalRef(env, cls_ste);
+  (*env)->DeleteLocalRef(env, cls);
 }
 
 #ifdef __cplusplus
