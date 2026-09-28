@@ -207,12 +207,14 @@ static NOINLINE int test_cancel_alarm_after_end(void) {
   return 0;
 }
 
-static volatile int holder_armed;
+/* Read and written from two threads, so every access is atomic. */
+static int holder_armed;
+#define HOLDER_ARMED() __atomic_load_n(&holder_armed, __ATOMIC_ACQUIRE)
 
 static NOINLINE void *holder_body(void *arg) {
   (void) arg;
   COFFEE_TRY() {
-    holder_armed = 1;
+    __atomic_store_n(&holder_armed, 1, __ATOMIC_RELEASE);
     for (;;) {
       usleep(1000);
     }
@@ -268,14 +270,14 @@ static NOINLINE int test_cancel_alarm_after_other_session(void) {
 static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
   pthread_t th;
   volatile int caught = 0, started = 0, rc = -1, waited = 0;
-  holder_armed = 0;
+  __atomic_store_n(&holder_armed, 0, __ATOMIC_RELEASE);
   COFFEE_TRY() {
     CRASH();
   } COFFEE_CATCH() {
     caught = 1;
     started = (pthread_create(&th, NULL, holder_body, NULL) == 0);
     if (started) {
-      while (!holder_armed && waited++ < 5000) {
+      while (!HOLDER_ARMED() && waited++ < 5000) {
         usleep(1000);
       }
       rc = coffeecatch_cancel_pending_alarm();
@@ -283,7 +285,7 @@ static NOINLINE int test_cancel_alarm_with_concurrent_session(void) {
   } COFFEE_END();
   CHECK(caught);
   CHECK(started);
-  CHECK(holder_armed);
+  CHECK(HOLDER_ARMED());
   CHECK(rc == 0);
   CHECK(alarm(0) == 0);
   return 0;
@@ -414,7 +416,7 @@ static NOINLINE int test_no_context_dies(void) {
   if (pid == 0) {
     pthread_t th;
     pthread_create(&th, NULL, holder_body, NULL);
-    while (!holder_armed) {
+    while (!HOLDER_ARMED()) {
       usleep(1000);
     }
     usleep(50000);
@@ -441,7 +443,7 @@ static NOINLINE int test_old_handler_runs_uncaught(void) {
     pthread_t th;
     signal(SIGSEGV, nonreturning_old_handler);   /* pre-existing: saved as the old handler */
     pthread_create(&th, NULL, holder_body, NULL);
-    while (!holder_armed) {
+    while (!HOLDER_ARMED()) {
       usleep(1000);
     }
     CRASH();          /* no context on this thread: must chain to the old handler */
@@ -761,6 +763,17 @@ static NOINLINE int test_backtrace(void) {
 
 #endif // HAVE_BACKTRACE
 
+#if defined(__SANITIZE_THREAD__)
+#define TSAN_SKIP "ThreadSanitizer reports the crash itself"
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define TSAN_SKIP "ThreadSanitizer reports the crash itself"
+#endif
+#endif
+#ifndef TSAN_SKIP
+#define TSAN_SKIP NULL
+#endif
+
 /* --- fork harness -------------------------------------------------------- */
 
 struct test {
@@ -788,7 +801,7 @@ static const struct test tests[] = {
   { "old handler non-returning",    test_old_handler_nonreturning, NULL },
   { "old handler runs when uncaught", test_old_handler_runs_uncaught, NULL },
   { "concurrent catches (threads)", test_threads, NULL },
-  { "no context: crash still kills", test_no_context_dies, NULL },
+  { "no context: crash still kills", test_no_context_dies, TSAN_SKIP },
   { "si_errno in message",          test_errno_message, NULL },
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
   { "stack overflow, twice",        test_stack_overflow_twice, NULL },
