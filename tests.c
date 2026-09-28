@@ -207,7 +207,7 @@ static NOINLINE int test_cancel_alarm_after_end(void) {
   return 0;
 }
 
-/* Read and written from two threads, so every access is atomic. */
+/* It is read and written from two threads, so every access is atomic. */
 static int holder_armed;
 #define HOLDER_ARMED() __atomic_load_n(&holder_armed, __ATOMIC_ACQUIRE)
 
