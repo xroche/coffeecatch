@@ -221,7 +221,7 @@ typedef void (*t_free_backtrace_symbols)(backtrace_symbol_t* symbols,
 
 /* Process-wide crash handler structure. */
 typedef struct native_code_global_struct {
-  /* Session refcount: written under mutex, read lock-free by coffeecatch_get(). */
+  /* coffeecatch_get() reads this refcount without the mutex. */
   int initialized;
 
   /* Lock. */
