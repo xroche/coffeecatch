@@ -769,6 +769,8 @@ static int coffeecatch_restore_handlers(size_t count) {
   return ok;
 }
 
+static void coffeecatch_thread_exit(void *arg);
+
 /* Internal globals initialization. */
 static int coffeecatch_handler_setup_global(void) {
   if (native_code_g.initialized == 0) {
@@ -808,7 +810,7 @@ static int coffeecatch_handler_setup_global(void) {
     }
 
     /* Initialize thread var. */
-    if (pthread_key_create(&native_code_thread, NULL) != 0) {
+    if (pthread_key_create(&native_code_thread, coffeecatch_thread_exit) != 0) {
       coffeecatch_restore_handlers(i);  /* i counts every installed signal */
       return -1;
     }
@@ -987,6 +989,33 @@ static int coffeecatch_handler_setup(int setup_thread) {
  * coffeecatch_handler_setup() was called to fully release allocated
  * resources.
  **/
+/* Drop one global refcount, uninstalling the handlers with the last one.
+   Returns whether every handler was restored. */
+static int coffeecatch_release_global(void) {
+  int ok = 1;
+  if (pthread_mutex_lock(&native_code_g.mutex) != 0) {
+    assert(! "pthread_mutex_lock() failed");
+  }
+  assert(native_code_g.initialized != 0);
+  if (--native_code_g.initialized == 0) {
+    DEBUG(print("removing global signal handlers\n"));
+
+    /* A failed restore must still reach the unlock below. */
+    ok = coffeecatch_restore_handlers(SIG_CATCH_COUNT);
+
+    /* Delete thread var. */
+    if (pthread_key_delete(native_code_thread) != 0) {
+      assert(! "pthread_key_delete() failed");
+    }
+
+    DEBUG(print("removed global signal handlers\n"));
+  }
+  if (pthread_mutex_unlock(&native_code_g.mutex) != 0) {
+    assert(! "pthread_mutex_unlock() failed");
+  }
+  return ok;
+}
+
 static int coffeecatch_handler_cleanup() {
   /* Cleanup locals. */
   native_code_handler_struct *const t = coffeecatch_get();
@@ -1008,31 +1037,19 @@ static int coffeecatch_handler_cleanup() {
     DEBUG(print("removed thread alternative stack\n"));
   }
 
-  /* Cleanup globals. */
-  if (pthread_mutex_lock(&native_code_g.mutex) != 0) {
-    assert(! "pthread_mutex_lock() failed");
-  }
-  assert(native_code_g.initialized != 0);
-  if (--native_code_g.initialized == 0) {
-    DEBUG(print("removing global signal handlers\n"));
-
-    /* A failed restore must still reach the unlock below. */
-    if (!coffeecatch_restore_handlers(SIG_CATCH_COUNT)) {
-      code = -1;
-    }
-
-    /* Delete thread var. */
-    if (pthread_key_delete(native_code_thread) != 0) {
-      assert(! "pthread_key_delete() failed");
-    }
-
-    DEBUG(print("removed global signal handlers\n"));
-  }
-  if (pthread_mutex_unlock(&native_code_g.mutex) != 0) {
-    assert(! "pthread_mutex_unlock() failed");
+  if (!coffeecatch_release_global()) {
+    code = -1;
   }
 
   return code;
+}
+
+/* Key destructor: a thread that exits inside a session, for example through
+   pthread_exit() or cancellation, still frees its state and its refcount. */
+static void coffeecatch_thread_exit(void *arg) {
+  (void) coffeecatch_native_code_handler_struct_free(
+      (native_code_handler_struct*) arg);
+  (void) coffeecatch_release_global();
 }
 
 /**

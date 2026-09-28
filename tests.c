@@ -563,6 +563,25 @@ static NOINLINE int test_global_setup_failure_rolls_back(void) {
   return 0;
 }
 
+static void *exit_inside_session(void *arg) {
+  (void) arg;
+  if (coffeecatch_setup() == 0) {
+    pthread_exit(NULL);  /* leaves without COFFEE_END(), as cancellation would */
+  }
+  return NULL;
+}
+
+/* A thread that exits inside a session still releases its hold on the
+ * handlers, so they come off once no session is left. */
+static NOINLINE int test_thread_exit_releases_session(void) {
+  pthread_t thread;
+  CHECK(install_plain_handler_everywhere());
+  CHECK(pthread_create(&thread, NULL, exit_inside_session, NULL) == 0);
+  CHECK(pthread_join(thread, NULL) == 0);
+  CHECK(plain_handler_everywhere());
+  return 0;
+}
+
 /* Does the thread's alternate stack match a snapshot taken earlier? */
 static int same_altstack(const stack_t *before) {
   stack_t now;
@@ -730,6 +749,7 @@ static const struct test tests[] = {
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
   { "global setup failure rolls back", test_global_setup_failure_rolls_back, NULL },
   { "cleanup restores altstack",    test_cleanup_restores_altstack, NULL },
+  { "thread exit releases session", test_thread_exit_releases_session, NULL },
 #ifdef COFFEE_TESTING
   { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
   { "altstack failure still cleans up", test_altstack_failure_still_cleans_up, NULL },
