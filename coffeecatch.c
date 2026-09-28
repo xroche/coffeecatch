@@ -748,6 +748,23 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
   abort();
 }
 
+/* Restore the first count saved dispositions and free them. Returns whether
+   every restore succeeded. Call with native_code_g.mutex held. */
+static int coffeecatch_restore_handlers(size_t count) {
+  int ok = 1;
+  size_t i;
+  for (i = 0; i < count && native_sig_catch[i] != 0; i++) {
+    const int sig = native_sig_catch[i];
+    assert(sig < SIG_NUMBER_MAX);
+    if (sigaction(sig, &native_code_g.sa_old[sig], NULL) != 0) {
+      ok = 0;
+    }
+  }
+  free(native_code_g.sa_old);
+  native_code_g.sa_old = NULL;
+  return ok;
+}
+
 /* Internal globals initialization. */
 static int coffeecatch_handler_setup_global(void) {
   if (native_code_g.initialized == 0) {
@@ -781,12 +798,14 @@ static int coffeecatch_handler_setup_global(void) {
           sig == SIGABRT ? &sa_abort : &sa_pass;
       assert(sig < SIG_NUMBER_MAX);
       if (sigaction(sig, action, &native_code_g.sa_old[sig]) != 0) {
+        coffeecatch_restore_handlers(i);
         return -1;
       }
     }
 
     /* Initialize thread var. */
     if (pthread_key_create(&native_code_thread, NULL) != 0) {
+      coffeecatch_restore_handlers(i);
       return -1;
     }
 
@@ -949,6 +968,7 @@ static int coffeecatch_handler_setup(int setup_thread) {
 static int coffeecatch_handler_cleanup() {
   /* Cleanup locals. */
   native_code_handler_struct *const t = coffeecatch_get();
+  int code = 0;
   if (t != NULL) {
     DEBUG(print("removing thread alternative stack\n"));
 
@@ -971,22 +991,12 @@ static int coffeecatch_handler_cleanup() {
   }
   assert(native_code_g.initialized != 0);
   if (--native_code_g.initialized == 0) {
-    size_t i;
-
     DEBUG(print("removing global signal handlers\n"));
 
-    /* Restore signal handler. */
-    for(i = 0; native_sig_catch[i] != 0; i++) {
-      const int sig = native_sig_catch[i];
-      assert(sig < SIG_NUMBER_MAX);
-      if (sigaction(sig, &native_code_g.sa_old[sig], NULL) != 0) {
-        return -1;
-      }
+    /* A failed restore must still reach the unlock below. */
+    if (!coffeecatch_restore_handlers(SIG_CATCH_COUNT)) {
+      code = -1;
     }
-
-    /* Free old structure. */
-    free(native_code_g.sa_old);
-    native_code_g.sa_old = NULL;
 
     /* Delete thread var. */
     if (pthread_key_delete(native_code_thread) != 0) {
@@ -999,7 +1009,7 @@ static int coffeecatch_handler_cleanup() {
     assert(! "pthread_mutex_unlock() failed");
   }
 
-  return 0;
+  return code;
 }
 
 /**

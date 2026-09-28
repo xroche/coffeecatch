@@ -500,6 +500,41 @@ static NOINLINE int test_cleanup_no_setup(void) {
   return 0;                /* not crashing is the pass */
 }
 
+static void plain_segv_handler(int code) {
+  (void) code;
+}
+
+/* A global setup that fails at pthread_key_create() restores the handlers it
+ * installed, so a later session cannot save coffeecatch's own as the original. */
+static NOINLINE int test_global_setup_failure_rolls_back(void) {
+  static pthread_key_t keys[8192];
+  size_t n = 0;
+  int failed;
+  struct sigaction plain, now;
+  memset(&plain, 0, sizeof(plain));
+  plain.sa_handler = plain_segv_handler;
+  CHECK(sigaction(SIGSEGV, &plain, NULL) == 0);
+
+  while (n < sizeof(keys) / sizeof(keys[0])
+         && pthread_key_create(&keys[n], NULL) == 0) {
+    n++;
+  }
+  CHECK(n < sizeof(keys) / sizeof(keys[0]));
+  failed = coffeecatch_setup() != 0;
+  while (n > 0) {
+    pthread_key_delete(keys[--n]);
+  }
+  CHECK(failed);
+  CHECK(sigaction(SIGSEGV, NULL, &now) == 0);
+  CHECK(now.sa_handler == plain_segv_handler);
+
+  CHECK(coffeecatch_setup() == 0);
+  coffeecatch_cleanup();
+  CHECK(sigaction(SIGSEGV, NULL, &now) == 0);
+  CHECK(now.sa_handler == plain_segv_handler);
+  return 0;
+}
+
 #ifdef COFFEE_TESTING
 /* A setup() that fails at the per-thread alloc must roll back the global install
  * (#66): the SIGSEGV disposition is restored, not left as coffeecatch's handler. */
@@ -620,6 +655,7 @@ static const struct test tests[] = {
   { "no context: crash still kills", test_no_context_dies, NULL },
   { "si_errno in message",          test_errno_message, NULL },
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
+  { "global setup failure rolls back", test_global_setup_failure_rolls_back, NULL },
 #ifdef COFFEE_TESTING
   { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
 #endif
