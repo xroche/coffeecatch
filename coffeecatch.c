@@ -221,7 +221,7 @@ typedef void (*t_free_backtrace_symbols)(backtrace_symbol_t* symbols,
 
 /* Process-wide crash handler structure. */
 typedef struct native_code_global_struct {
-  /* Initialized. */
+  /* coffeecatch_get() reads this refcount without the mutex. */
   int initialized;
 
   /* Lock. */
@@ -489,7 +489,7 @@ static void coffeecatch_start_alarm(void) {
 }
 
 static void coffeecatch_mark_alarm(void) {
-  native_code_g.alarm_pending = 1;
+  __atomic_store_n(&native_code_g.alarm_pending, 1, __ATOMIC_RELEASE);
 }
 
 #ifdef USE_UNWIND
@@ -637,7 +637,7 @@ static void coffeecatch_copy_context(native_code_handler_struct *const t,
  * @c null if no such structure is available. */
 static native_code_handler_struct* coffeecatch_get() {
   /* pthread_getspecific() is only valid once the key exists. */
-  if (native_code_g.initialized == 0) {
+  if (__atomic_load_n(&native_code_g.initialized, __ATOMIC_ACQUIRE) == 0) {
     return NULL;
   }
   return (native_code_handler_struct*)
@@ -645,8 +645,8 @@ static native_code_handler_struct* coffeecatch_get() {
 }
 
 int coffeecatch_cancel_pending_alarm() {
-  if (native_code_g.alarm_pending) {
-    native_code_g.alarm_pending = 0;
+  /* Any thread may cancel, so take the flag in one step. */
+  if (__atomic_exchange_n(&native_code_g.alarm_pending, 0, __ATOMIC_ACQ_REL)) {
     /* "If seconds is 0, a pending alarm request, if any, is canceled." */
     alarm(0);
     return 0;
@@ -805,7 +805,7 @@ static int coffeecatch_handler_setup_global(void) {
   }
 
   /* Bump the refcount only after the key exists. */
-  native_code_g.initialized++;
+  __atomic_add_fetch(&native_code_g.initialized, 1, __ATOMIC_RELEASE);
 
   /* OK. */
   return 0;
@@ -817,7 +817,8 @@ static int coffeecatch_handler_setup_global(void) {
 #ifdef COFFEE_TESTING
 /* Test seam: how many per-thread structures are allocated right now. */
 int coffeecatch_test_live_structs = 0;
-#define COFFEE_TEST_LIVE_STRUCTS(N) (coffeecatch_test_live_structs += (N))
+#define COFFEE_TEST_LIVE_STRUCTS(N) \
+  __atomic_add_fetch(&coffeecatch_test_live_structs, (N), __ATOMIC_RELAXED)
 #else
 #define COFFEE_TEST_LIVE_STRUCTS(N) ((void) 0)
 #endif
@@ -986,7 +987,7 @@ static int coffeecatch_release_global(void) {
     assert(! "pthread_mutex_lock() failed");
   }
   assert(native_code_g.initialized != 0);
-  if (--native_code_g.initialized == 0) {
+  if (__atomic_sub_fetch(&native_code_g.initialized, 1, __ATOMIC_RELEASE) == 0) {
     DEBUG(print("removing global signal handlers\n"));
 
     /* A failed restore must still reach the unlock below. */
