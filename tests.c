@@ -500,38 +500,58 @@ static NOINLINE int test_cleanup_no_setup(void) {
   return 0;                /* not crashing is the pass */
 }
 
-static void plain_segv_handler(int code) {
+static const int caught_signals[] = { SIGABRT, SIGILL, SIGTRAP, SIGBUS,
+  SIGFPE, SIGSEGV,
+#ifdef SIGSTKFLT
+  SIGSTKFLT,
+#endif
+};
+#define CAUGHT_COUNT (sizeof(caught_signals) / sizeof(caught_signals[0]))
+
+static void plain_handler(int code) {
   (void) code;
+}
+
+/* Is plain_handler still installed on every signal coffeecatch catches? */
+static int plain_handler_everywhere(void) {
+  size_t i;
+  for (i = 0; i < CAUGHT_COUNT; i++) {
+    struct sigaction now;
+    if (sigaction(caught_signals[i], NULL, &now) != 0
+        || now.sa_handler != plain_handler) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 /* A global setup that fails at pthread_key_create() restores the handlers it
  * installed, so a later session cannot save coffeecatch's own as the original. */
 static NOINLINE int test_global_setup_failure_rolls_back(void) {
   static pthread_key_t keys[8192];
-  size_t n = 0;
+  size_t i, n = 0;
   int failed;
-  struct sigaction plain, now;
+  struct sigaction plain;
   memset(&plain, 0, sizeof(plain));
-  plain.sa_handler = plain_segv_handler;
-  CHECK(sigaction(SIGSEGV, &plain, NULL) == 0);
+  plain.sa_handler = plain_handler;
+  for (i = 0; i < CAUGHT_COUNT; i++) {
+    CHECK(sigaction(caught_signals[i], &plain, NULL) == 0);
+  }
 
   while (n < sizeof(keys) / sizeof(keys[0])
          && pthread_key_create(&keys[n], NULL) == 0) {
     n++;
   }
-  CHECK(n < sizeof(keys) / sizeof(keys[0]));
   failed = coffeecatch_setup() != 0;
   while (n > 0) {
     pthread_key_delete(keys[--n]);
   }
   CHECK(failed);
-  CHECK(sigaction(SIGSEGV, NULL, &now) == 0);
-  CHECK(now.sa_handler == plain_segv_handler);
+  CHECK(plain_handler_everywhere());
 
   CHECK(coffeecatch_setup() == 0);
   coffeecatch_cleanup();
-  CHECK(sigaction(SIGSEGV, NULL, &now) == 0);
-  CHECK(now.sa_handler == plain_segv_handler);
+  CHECK(plain_handler_everywhere());
   return 0;
 }
 

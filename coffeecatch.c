@@ -748,8 +748,8 @@ static void coffeecatch_signal_abort(const int code, siginfo_t *const si,
   abort();
 }
 
-/* Restore the first count saved dispositions and free them. Returns whether
-   every restore succeeded. Call with native_code_g.mutex held. */
+/* Restore the first count saved dispositions, freeing them only if every
+   restore succeeded. Call with native_code_g.mutex held. */
 static int coffeecatch_restore_handlers(size_t count) {
   int ok = 1;
   size_t i;
@@ -760,8 +760,11 @@ static int coffeecatch_restore_handlers(size_t count) {
       ok = 0;
     }
   }
-  free(native_code_g.sa_old);
-  native_code_g.sa_old = NULL;
+  /* A handler left installed still reads sa_old. */
+  if (ok) {
+    free(native_code_g.sa_old);
+    native_code_g.sa_old = NULL;
+  }
   return ok;
 }
 
@@ -805,7 +808,7 @@ static int coffeecatch_handler_setup_global(void) {
 
     /* Initialize thread var. */
     if (pthread_key_create(&native_code_thread, NULL) != 0) {
-      coffeecatch_restore_handlers(i);
+      coffeecatch_restore_handlers(i);  /* i counts every installed signal */
       return -1;
     }
 
