@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include "coffeecatch.h"
@@ -497,21 +498,29 @@ static volatile int overflow_sink, overflow_limit = 1 << 30;
 static NOINLINE int overflow(int depth) {
   volatile char frame[1024];
   frame[depth % sizeof(frame)] = (char) depth;
-  if (depth == overflow_limit) {  /* never reached: the stack runs out first */
+  if (depth == overflow_limit) {  /* the stack runs out long before this */
     return 0;
   }
   return overflow(depth + 1) + frame[0] + overflow_sink;
 }
 
-/* A stack overflow is caught on the alternate stack, and a second one proves the
- * first catch left that stack usable. */
+/* Two overflows in a row are both caught, so the first catch left the alternate
+ * stack usable. A failed setup lands in the catch block, so count faults only. */
 static NOINLINE int test_stack_overflow_twice(void) {
   volatile int caught = 0, i;
+  struct rlimit stack;
+  const rlim_t cap = 8 << 20;  /* keeps "ulimit -s unlimited" from eating memory */
+  CHECK(getrlimit(RLIMIT_STACK, &stack) == 0);
+  if (stack.rlim_cur == RLIM_INFINITY || stack.rlim_cur > cap) {
+    stack.rlim_cur = cap;
+    CHECK(setrlimit(RLIMIT_STACK, &stack) == 0);
+  }
   for (i = 0; i < 2; i++) {
     COFFEE_TRY() {
       overflow_sink = overflow(0);
     } COFFEE_CATCH() {
-      caught++;
+      const int sig = coffeecatch_get_signal();
+      caught += sig == SIGSEGV || sig == SIGBUS;
       coffeecatch_cancel_pending_alarm();
     } COFFEE_END();
   }
