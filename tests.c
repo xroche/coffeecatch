@@ -580,16 +580,6 @@ static NOINLINE int test_cleanup_restores_altstack(void) {
   CHECK(sigaltstack(NULL, &before) == 0);
   CHECK(coffeecatch_setup() == 0);
   coffeecatch_cleanup();
-  { /* DEBUG-MACOS */
-    stack_t now, probe;
-    int rc;
-    sigaltstack(NULL, &now);
-    fprintf(stderr, "    DBG before sp=%p size=%lu flags=%d\n", before.ss_sp, (unsigned long) before.ss_size, before.ss_flags);
-    fprintf(stderr, "    DBG after  sp=%p size=%lu flags=%d\n", now.ss_sp, (unsigned long) now.ss_size, now.ss_flags);
-    probe = before;
-    rc = sigaltstack(&probe, NULL);
-    fprintf(stderr, "    DBG restore(before) rc=%d errno=%d\n", rc, errno);
-  }
   CHECK(same_altstack(&before));
 
   memset(&mine, 0, sizeof(mine));
