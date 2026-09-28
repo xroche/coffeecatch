@@ -111,7 +111,7 @@ static void bt_fun(void *arg, const char *module, uintptr_t addr,
   if (t->index < t->size) {
     (*t->env)->SetObjectArrayElement(t->env, t->elements, t->index++, trace);
   }
-  /* Runs once per frame within one native call, so release locals now. */
+  /* This runs once per frame, so release its locals now. */
   (*env)->DeleteLocalRef(env, trace);
   (*env)->DeleteLocalRef(env, fileName);
   (*env)->DeleteLocalRef(env, methodName);
