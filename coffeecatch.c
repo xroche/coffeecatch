@@ -437,17 +437,6 @@ static void coffeecatch_call_old_signal_handler(const int code, siginfo_t *const
   }
 }
 
-/* Unflag "on stack" */
-static void coffeecatch_revert_alternate_stack(void) {
-#ifndef NO_USE_SIGALTSTACK
-  stack_t ss;
-  if (sigaltstack(NULL, &ss) == 0) {
-    ss.ss_flags &= ~SS_ONSTACK;
-    sigaltstack (&ss, NULL);
-  }
-#endif
-}
-
 /* Try to jump to userland. */
 static void coffeecatch_try_jump_userland(native_code_handler_struct*
                                                  const t,
@@ -471,9 +460,6 @@ static void coffeecatch_try_jump_userland(native_code_handler_struct*
      * later crash would siglongjmp() into a dead one. */
     t->unwind_guarded = 0;
 #endif
-
-    /* We need to revert the alternate stack before jumping. */
-    coffeecatch_revert_alternate_stack();
 
     /*
      * Note on async-signal-safety of siglongjmp() [POSIX] :
