@@ -32,7 +32,7 @@ would also restructure the test suite, split the second thing into its own PR
 and say why.
 
 Do not reformat untouched lines, modernize the C89-ish style, or add a
-sanitizer leg to CI without reading why UBSan is alone there.
+sanitizer leg to CI without reading why ASan is excluded there.
 
 ## Claims
 

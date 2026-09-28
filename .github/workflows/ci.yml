@@ -1,4 +1,4 @@
-# Build and test CoffeeCatch across compilers, architectures, macOS, and UBSan.
+# Build and test CoffeeCatch across compilers, architectures, macOS, UBSan and TSan.
 # The library ships as a hand-written Makefile, so CI drives it directly: that
 # is exactly what rotted unnoticed before (transposed calloc args and a stale
 # link order broke `make` on modern toolchains, with no CI to catch it).
@@ -84,7 +84,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
 
-      # UBSan only, on purpose: coffeecatch installs its own SIGSEGV/SIGABRT/...
+      # UBSan, but no ASan: coffeecatch installs its own SIGSEGV/SIGABRT/...
       # handlers and a per-thread alternate signal stack, which ASan's own
       # signal handling and altstack cannot coexist with (every intentional
       # crash then dies uncaught). UBSan installs no signal handlers, so it
@@ -99,6 +99,29 @@ jobs:
           make check \
             CFLAGS="-O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
             LDFLAGS="-fsanitize=undefined"
+
+  tsan:
+    name: sanitizer (tsan, clang)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang
+
+      # TSan checks the refcount and alarm flag shared with the signal handler.
+      - name: Build and run under TSan
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          make check CC=clang CXX=clang++ \
+            CFLAGS="-O1 -g -fsanitize=thread" \
+            CXXFLAGS="-O1 -g -fsanitize=thread" \
+            LDFLAGS="-fsanitize=thread"
 
   macos:
     name: build+test (macOS ${{ matrix.arch }}, clang)

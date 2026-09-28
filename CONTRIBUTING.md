@@ -108,11 +108,11 @@ before:
   closest proxy for the Android arm64 target.
 - a `-DUSE_UNWIND` leg on x86-64, the only coverage the unwind path and its
   nested-fault guard get outside an NDK build.
-- UBSan only, deliberately. ASan's own signal handling and alternate stack
-  cannot coexist with coffeecatch's handlers and per-thread altstack: every
-  intentional crash then dies uncaught. UBSan installs no handlers. Please do
-  not add an ASan leg.
-- no macOS, and Android is not built at all.
+- UBSan and TSan, but deliberately no ASan. ASan's own signal handling and
+  alternate stack cannot coexist with coffeecatch's handlers and per-thread
+  altstack: every intentional crash then dies uncaught. UBSan installs no
+  handlers, and TSan leaves them working. Please do not add an ASan leg.
+- macOS on arm64 and x86-64. Android is not built at all.
 
 Pull requests from forks need maintainer approval before CI runs, so your first
 push will show no checks until someone approves them.
