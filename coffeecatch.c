@@ -842,7 +842,12 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
   }
 
 #ifndef NO_USE_SIGALTSTACK
-  /* Restore the previous alternative stack, even when it was disabled. */
+  /* Restore the previous alternative stack, even when it was disabled. macOS
+     rejects a disabled stack smaller than MINSIGSTKSZ, so lend ours the size. */
+  if (t->stack_installed && (t->stack_old.ss_flags & SS_DISABLE) != 0) {
+    t->stack_old.ss_sp = t->stack_buffer;
+    t->stack_old.ss_size = t->stack_buffer_size;
+  }
   if (t->stack_installed
       && (COFFEE_TEST_ALTSTACK_FAILURE
           || sigaltstack(&t->stack_old, NULL) != 0)) {
