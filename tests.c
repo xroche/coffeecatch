@@ -493,6 +493,32 @@ static NOINLINE int test_errno_message(void) {
   return 0;
 }
 
+static volatile int overflow_sink, overflow_limit = 1 << 30;
+static NOINLINE int overflow(int depth) {
+  volatile char frame[1024];
+  frame[depth % sizeof(frame)] = (char) depth;
+  if (depth == overflow_limit) {  /* never reached: the stack runs out first */
+    return 0;
+  }
+  return overflow(depth + 1) + frame[0] + overflow_sink;
+}
+
+/* A stack overflow is caught on the alternate stack, and a second one proves the
+ * first catch left that stack usable. */
+static NOINLINE int test_stack_overflow_twice(void) {
+  volatile int caught = 0, i;
+  for (i = 0; i < 2; i++) {
+    COFFEE_TRY() {
+      overflow_sink = overflow(0);
+    } COFFEE_CATCH() {
+      caught++;
+      coffeecatch_cancel_pending_alarm();
+    } COFFEE_END();
+  }
+  CHECK(caught == 2);
+  return 0;
+}
+
 /* COFFEE_END() (== coffeecatch_cleanup) fires even when coffeecatch_setup()
  * failed: no per-thread context exists, so t is NULL. Pre-#57 this NULL-derefs. */
 static NOINLINE int test_cleanup_no_setup(void) {
@@ -728,6 +754,7 @@ static const struct test tests[] = {
   { "no context: crash still kills", test_no_context_dies, NULL },
   { "si_errno in message",          test_errno_message, NULL },
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
+  { "stack overflow, twice",        test_stack_overflow_twice, NULL },
   { "global setup failure rolls back", test_global_setup_failure_rolls_back, NULL },
   { "cleanup restores altstack",    test_cleanup_restores_altstack, NULL },
 #ifdef COFFEE_TESTING
