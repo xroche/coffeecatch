@@ -10,6 +10,7 @@ Please read this file before your first patch.
 ```sh
 make          # static lib, shared lib, tests, sample
 make check    # build and run the test suite
+make check-jni CPPFLAGS=-DUSE_UNWIND   # JNI layer test, needs JAVA_HOME
 ```
 
 `tests` and `sample` link the static archive, so there is no `LD_LIBRARY_PATH`
@@ -118,9 +119,9 @@ push will show no checks until someone approves them.
 
 ## Things that bite
 
-- `coffeejni.c` needs `<jni.h>` and is built by neither the Makefile nor CI.
-  "It built" never means the JNI layer built; validate it against an NDK or JDK
-  include path separately.
+- `coffeejni.c` needs `<jni.h>`, so only `make check-jni` builds it. That test
+  runs it against a fake `JNIEnv` on the `USE_UNWIND` leg, not in a JVM or with
+  the NDK, so validate an Android change against the NDK separately.
 - This is Android-first code. Green CI on Linux is a real but partial signal:
   symbolication and the Bionic `ucontext`/`sigcontext` quirks are exactly what
   every non-Android leg skips.
