@@ -64,6 +64,14 @@ jobs:
       - name: Build and test with USE_UNWIND
         run: make all check CPPFLAGS=-DUSE_UNWIND CFLAGS="-O2 -g -funwind-tables"
 
+      # The JNI layer only builds a Java stack trace when a backtrace exists,
+      # so its test runs here. It needs the runner's JDK headers but no JVM.
+      - name: Test the JNI layer with USE_UNWIND
+        run: |
+          set -euo pipefail
+          test -r "$JAVA_HOME/include/jni.h"
+          make check-jni CPPFLAGS=-DUSE_UNWIND CFLAGS="-O2 -g -funwind-tables"
+
   ubsan:
     name: sanitizer (ubsan, gcc)
     runs-on: ubuntu-24.04

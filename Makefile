@@ -34,24 +34,29 @@ ifeq ($(UNAME_S),Darwin)
   SOFLAGS := -dynamiclib -install_name @rpath/$(SHLIB)
   SOLIBS  :=
   LDLIBS  :=
+  JNI_OS  := darwin
 else
   SHLIB   := libcoffeecatch.so
   SOFLAGS := -shared -Wl,-soname=$(SHLIB) -Wl,--no-undefined -rdynamic
   SOLIBS  := -ldl
   LDLIBS  := -ldl
+  JNI_OS  := linux
 endif
+
+# coffeejni.c and its test need <jni.h>, so only `make check-jni` builds them.
+JNI_CFLAGS ?= -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/$(JNI_OS)
 
 STATICLIB := libcoffeecatch.a
 
 # --- Sources -----------------------------------------------------------------
 # coffeejni.c is intentionally excluded: it needs <jni.h> (an NDK/JDK header)
-# and is meant to be compiled into the embedder, not this standalone build.
+# and is meant to be compiled into the embedder. Only check-jni builds it.
 LIBSRC := coffeecatch.c
 LIBOBJ := $(LIBSRC:.c=.o)
 BINS   := tests tests_cxx sample
 
 # --- Targets -----------------------------------------------------------------
-.PHONY: all check test clean dist
+.PHONY: all check check-jni test clean dist
 .DEFAULT_GOAL := all
 
 all: $(STATICLIB) $(SHLIB) $(BINS)
@@ -88,10 +93,20 @@ check test: tests tests_cxx
 	./tests
 	./tests_cxx
 
+coffeejni.o: coffeejni.c coffeejni.h coffeecatch.h
+	$(CC) $(CPPFLAGS) $(JNI_CFLAGS) $(CFLAGS) -c $< -o $@
+tests_jni.o: tests_jni.c coffeejni.h coffeecatch.h
+	$(CC) $(CPPFLAGS) $(JNI_CFLAGS) $(CFLAGS) -c $< -o $@
+tests_jni: tests_jni.o coffeejni.o $(STATICLIB)
+	$(CC) $(CFLAGS) tests_jni.o coffeejni.o $(STATICLIB) -o $@ $(LDFLAGS) $(LDLIBS)
+
+check-jni: tests_jni
+	./tests_jni
+
 dist:
 	$(RM) coffeecatch.tgz
 	tar cvfz coffeecatch.tgz $(LIBSRC) coffeecatch.h coffeejni.c coffeejni.h \
-		sample.c tests.c tests_cxx.cpp Makefile LICENSE README.md
+		sample.c tests.c tests_cxx.cpp tests_jni.c Makefile LICENSE README.md
 
 clean:
-	$(RM) *.o $(STATICLIB) $(SHLIB) libcoffeecatch.so.* $(BINS) coffeecatch.tgz
+	$(RM) *.o $(STATICLIB) $(SHLIB) libcoffeecatch.so.* $(BINS) tests_jni coffeecatch.tgz
