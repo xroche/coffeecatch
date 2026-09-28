@@ -568,7 +568,8 @@ static int same_altstack(const stack_t *before) {
   stack_t now;
   return sigaltstack(NULL, &now) == 0
     && (now.ss_flags & SS_DISABLE) == (before->ss_flags & SS_DISABLE)
-    && ((now.ss_flags & SS_DISABLE) != 0 || now.ss_sp == before->ss_sp);
+    && ((now.ss_flags & SS_DISABLE) != 0
+        || (now.ss_sp == before->ss_sp && now.ss_size == before->ss_size));
 }
 
 /* A session hands back the thread's previous alternate stack, even none, rather
@@ -596,11 +597,14 @@ static NOINLINE int test_cleanup_restores_altstack(void) {
  * handlers come off with the last session. */
 extern int coffeecatch_test_force_altstack_failure;
 static NOINLINE int test_altstack_failure_still_cleans_up(void) {
+  stack_t before;
+  CHECK(sigaltstack(NULL, &before) == 0);
   CHECK(install_plain_handler_everywhere());
   CHECK(coffeecatch_setup() == 0);
   coffeecatch_test_force_altstack_failure = 1;
   coffeecatch_cleanup();
   coffeecatch_test_force_altstack_failure = 0;
+  CHECK(!same_altstack(&before));  /* the injected failure left ours in place */
   CHECK(plain_handler_everywhere());
   return 0;
 }
