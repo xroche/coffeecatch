@@ -56,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential default-jdk-headless
+          sudo apt-get install -y --no-install-recommends build-essential
 
       # USE_UNWIND is normally Android-only, so the _Unwind_Backtrace path and
       # its nested-fault guard never reach the legs above. Forcing it on here
@@ -65,12 +65,12 @@ jobs:
         run: make all check CPPFLAGS=-DUSE_UNWIND CFLAGS="-O2 -g -funwind-tables"
 
       # The JNI layer only builds a Java stack trace when a backtrace exists,
-      # so its test runs here. It needs <jni.h> but no JVM.
+      # so its test runs here. It needs the runner's JDK headers but no JVM.
       - name: Test the JNI layer with USE_UNWIND
         run: |
           set -euo pipefail
-          JAVA_HOME=$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")
-          make check-jni JAVA_HOME="$JAVA_HOME" CPPFLAGS=-DUSE_UNWIND CFLAGS="-O2 -g -funwind-tables"
+          test -r "$JAVA_HOME/include/jni.h"
+          make check-jni CPPFLAGS=-DUSE_UNWIND CFLAGS="-O2 -g -funwind-tables"
 
   ubsan:
     name: sanitizer (ubsan, gcc)
