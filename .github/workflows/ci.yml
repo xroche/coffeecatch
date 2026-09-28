@@ -98,6 +98,7 @@ jobs:
           set -euo pipefail
           make check \
             CFLAGS="-O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+            CXXFLAGS="-O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
             LDFLAGS="-fsanitize=undefined"
 
   tsan:
