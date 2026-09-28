@@ -829,6 +829,14 @@ static int coffeecatch_handler_setup_global(void) {
  * Free a native_code_handler_struct structure.
  **/
 #ifdef COFFEE_TESTING
+/* Test seam: how many per-thread structures are allocated right now. */
+int coffeecatch_test_live_structs = 0;
+#define COFFEE_TEST_LIVE_STRUCTS(N) (coffeecatch_test_live_structs += (N))
+#else
+#define COFFEE_TEST_LIVE_STRUCTS(N) ((void) 0)
+#endif
+
+#ifdef COFFEE_TESTING
 /* Test seam: when nonzero, restoring the previous alternative stack fails. */
 int coffeecatch_test_force_altstack_failure = 0;
 #define COFFEE_TEST_ALTSTACK_FAILURE coffeecatch_test_force_altstack_failure
@@ -869,6 +877,7 @@ static int coffeecatch_native_code_handler_struct_free(native_code_handler_struc
 
   /* Free structure. */
   free(t);
+  COFFEE_TEST_LIVE_STRUCTS(-1);
 
   return code;
 }
@@ -896,6 +905,7 @@ static native_code_handler_struct* coffeecatch_native_code_handler_struct_init(v
   if (t == NULL) {
     return NULL;
   }
+  COFFEE_TEST_LIVE_STRUCTS(+1);
 
   DEBUG(print("installing thread alternative stack\n"));
 
@@ -982,13 +992,6 @@ static int coffeecatch_handler_setup(int setup_thread) {
   return 0;
 }
 
-/**
- * Release the resources allocated by a previous call to
- * coffeecatch_handler_setup().
- * This function must be called as many times as
- * coffeecatch_handler_setup() was called to fully release allocated
- * resources.
- **/
 /* Drop one global refcount, uninstalling the handlers with the last one.
    Returns whether every handler was restored. */
 static int coffeecatch_release_global(void) {
@@ -1016,6 +1019,13 @@ static int coffeecatch_release_global(void) {
   return ok;
 }
 
+/**
+ * Release the resources allocated by a previous call to
+ * coffeecatch_handler_setup().
+ * This function must be called as many times as
+ * coffeecatch_handler_setup() was called to fully release allocated
+ * resources.
+ **/
 static int coffeecatch_handler_cleanup() {
   /* Cleanup locals. */
   native_code_handler_struct *const t = coffeecatch_get();
@@ -1044,8 +1054,7 @@ static int coffeecatch_handler_cleanup() {
   return code;
 }
 
-/* Key destructor: a thread that exits inside a session, for example through
-   pthread_exit() or cancellation, still frees its state and its refcount. */
+/* Frees the state and refcount of a thread that exits inside a session. */
 static void coffeecatch_thread_exit(void *arg) {
   (void) coffeecatch_native_code_handler_struct_free(
       (native_code_handler_struct*) arg);

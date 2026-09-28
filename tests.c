@@ -566,19 +566,28 @@ static NOINLINE int test_global_setup_failure_rolls_back(void) {
 static void *exit_inside_session(void *arg) {
   (void) arg;
   if (coffeecatch_setup() == 0) {
-    pthread_exit(NULL);  /* leaves without COFFEE_END(), as cancellation would */
+    pthread_exit((void*) 1);  /* skip COFFEE_END(), as cancellation would */
   }
   return NULL;
 }
+
+#ifdef COFFEE_TESTING
+extern int coffeecatch_test_live_structs;
+#endif
 
 /* A thread that exits inside a session still releases its hold on the
  * handlers, so they come off once no session is left. */
 static NOINLINE int test_thread_exit_releases_session(void) {
   pthread_t thread;
+  void *in_session = NULL;
   CHECK(install_plain_handler_everywhere());
   CHECK(pthread_create(&thread, NULL, exit_inside_session, NULL) == 0);
-  CHECK(pthread_join(thread, NULL) == 0);
+  CHECK(pthread_join(thread, &in_session) == 0);
+  CHECK(in_session == (void*) 1);
   CHECK(plain_handler_everywhere());
+#ifdef COFFEE_TESTING
+  CHECK(coffeecatch_test_live_structs == 0);
+#endif
   return 0;
 }
 
