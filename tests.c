@@ -512,6 +512,19 @@ static void plain_handler(int code) {
   (void) code;
 }
 
+static int install_plain_handler_everywhere(void) {
+  struct sigaction plain;
+  size_t i;
+  memset(&plain, 0, sizeof(plain));
+  plain.sa_handler = plain_handler;
+  for (i = 0; i < CAUGHT_COUNT; i++) {
+    if (sigaction(caught_signals[i], &plain, NULL) != 0) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* Is plain_handler still installed on every signal coffeecatch catches? */
 static int plain_handler_everywhere(void) {
   size_t i;
@@ -529,14 +542,9 @@ static int plain_handler_everywhere(void) {
  * installed, so a later session cannot save coffeecatch's own as the original. */
 static NOINLINE int test_global_setup_failure_rolls_back(void) {
   static pthread_key_t keys[8192];
-  size_t i, n = 0;
+  size_t n = 0;
   int failed;
-  struct sigaction plain;
-  memset(&plain, 0, sizeof(plain));
-  plain.sa_handler = plain_handler;
-  for (i = 0; i < CAUGHT_COUNT; i++) {
-    CHECK(sigaction(caught_signals[i], &plain, NULL) == 0);
-  }
+  CHECK(install_plain_handler_everywhere());
 
   while (n < sizeof(keys) / sizeof(keys[0])
          && pthread_key_create(&keys[n], NULL) == 0) {
@@ -555,7 +563,48 @@ static NOINLINE int test_global_setup_failure_rolls_back(void) {
   return 0;
 }
 
+/* Does the thread's alternate stack match a snapshot taken earlier? */
+static int same_altstack(const stack_t *before) {
+  stack_t now;
+  return sigaltstack(NULL, &now) == 0
+    && (now.ss_flags & SS_DISABLE) == (before->ss_flags & SS_DISABLE)
+    && ((now.ss_flags & SS_DISABLE) != 0 || now.ss_sp == before->ss_sp);
+}
+
+/* A session hands back the thread's previous alternate stack, even none, rather
+ * than leaving the kernel pointing at the buffer cleanup freed. */
+static NOINLINE int test_cleanup_restores_altstack(void) {
+  static char own[65536];
+  stack_t before, mine;
+  CHECK(sigaltstack(NULL, &before) == 0);
+  CHECK(coffeecatch_setup() == 0);
+  coffeecatch_cleanup();
+  CHECK(same_altstack(&before));
+
+  memset(&mine, 0, sizeof(mine));
+  mine.ss_sp = own;
+  mine.ss_size = sizeof(own);
+  CHECK(sigaltstack(&mine, NULL) == 0);
+  CHECK(coffeecatch_setup() == 0);
+  coffeecatch_cleanup();
+  CHECK(same_altstack(&mine));
+  return 0;
+}
+
 #ifdef COFFEE_TESTING
+/* A failed alternate stack restore still drops the global refcount, so the
+ * handlers come off with the last session. */
+extern int coffeecatch_test_force_altstack_failure;
+static NOINLINE int test_altstack_failure_still_cleans_up(void) {
+  CHECK(install_plain_handler_everywhere());
+  CHECK(coffeecatch_setup() == 0);
+  coffeecatch_test_force_altstack_failure = 1;
+  coffeecatch_cleanup();
+  coffeecatch_test_force_altstack_failure = 0;
+  CHECK(plain_handler_everywhere());
+  return 0;
+}
+
 /* A setup() that fails at the per-thread alloc must roll back the global install
  * (#66): the SIGSEGV disposition is restored, not left as coffeecatch's handler. */
 extern int coffeecatch_test_force_alloc_failure;
@@ -676,8 +725,10 @@ static const struct test tests[] = {
   { "si_errno in message",          test_errno_message, NULL },
   { "cleanup without setup",        test_cleanup_no_setup, NULL },
   { "global setup failure rolls back", test_global_setup_failure_rolls_back, NULL },
+  { "cleanup restores altstack",    test_cleanup_restores_altstack, NULL },
 #ifdef COFFEE_TESTING
   { "setup failure rolls back",     test_setup_failure_rolls_back, NULL },
+  { "altstack failure still cleans up", test_altstack_failure_still_cleans_up, NULL },
 #endif
 #ifdef HAVE_BACKTRACE
   { "backtrace frames",             test_backtrace,   NULL },
