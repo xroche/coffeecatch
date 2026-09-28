@@ -219,6 +219,7 @@ int main(void) {
       return 1;
     }
     CHECK(jni_errors == 0);
+    CHECK(live_refs == 0);
   }
   printf("jni: %d local refs left\n", live_refs);
   return 0;
